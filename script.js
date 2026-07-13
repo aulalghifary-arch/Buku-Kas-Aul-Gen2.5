@@ -1441,10 +1441,23 @@ async function openOptionsMenu(){
   });
 }
 
+/* Warna status bar (address bar/notch) untuk tiap mode.
+   Nilainya mengikuti warna nyata header (.app-header) agar menyatu,
+   bukan nilai statis terpisah yang bisa "lupa" disinkronkan. */
+const STATUS_BAR_COLOR = { light: '#0B4F45', dark: '#0B4F45' };
+
+function syncStatusBarColor(){
+  const meta = document.getElementById('meta-theme-color');
+  if(!meta) return;
+  const mode = document.body.classList.contains('dark') ? 'dark' : 'light';
+  meta.setAttribute('content', STATUS_BAR_COLOR[mode]);
+}
+
 function toggleTheme(){
   document.body.classList.toggle('dark');
   DB.settings.theme = document.body.classList.contains('dark') ? 'dark' : 'light';
   saveDB();
+  syncStatusBarColor();
   if(currentPage === 'charts') renderChart();
   notify(`Mode ${DB.settings.theme==='dark'?'gelap':'terang'} diaktifkan`);
 }
@@ -1483,6 +1496,7 @@ async function restoreDataPrompt(){
         DB = normalizeDB(parsed);
         saveDB();
         document.body.classList.toggle('dark', DB.settings.theme === 'dark');
+        syncStatusBarColor();
         historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
         chartRange = todayRange(); invoiceRange = todayRange();
         renderAll();
@@ -1831,6 +1845,7 @@ function setupKeyboardWatcher(){
 function init(){
   loadDB();
   if(DB.settings.theme === 'dark') document.body.classList.add('dark');
+  syncStatusBarColor();
   wireStaticEvents();
   setupKeyboardWatcher();
   resetEntryForm();
