@@ -25,6 +25,7 @@
   --c-ink-40:         rgba(27,36,48,.4);
 
   --gradient-primary: linear-gradient(135deg, #0B4F45 0%, #16324F 55%, #4A3F6B 100%);
+  --gradient-header:  linear-gradient(180deg, #0B4F45 0%, #16324F 55%, #4A3F6B 100%);
   --gradient-brass:   linear-gradient(120deg, #C9A253 0%, #E4C878 100%);
   --gradient-coral:   linear-gradient(120deg, #D6614F 0%, #E48A7C 100%);
 
@@ -86,7 +87,7 @@ body.dark{
 
 /* ---------------------------------- RESET ---------------------------------- */
 *, *::before, *::after{ box-sizing: border-box; }
-html, body{ height: 100%; }
+html, body{ height: 100%; overscroll-behavior-y: contain; }
 body{
   margin: 0;
   font-family: var(--font-body);
@@ -94,6 +95,7 @@ body{
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   transition: background-color .25s ease, color .25s ease;
+  overscroll-behavior-y: contain;
 }
 button, input{ font-family: inherit; color: inherit; }
 button{ cursor: pointer; background: none; border: none; }
@@ -139,7 +141,7 @@ button:focus-visible, input:focus-visible{
   justify-content: space-between;
   padding-left: 18px;
   padding-right: 12px;
-  background: var(--gradient-primary);
+  background: var(--gradient-header);
   color: var(--text-on-dark);
   position: sticky;
   top: 0;
@@ -174,6 +176,7 @@ button:focus-visible, input:focus-visible{
   flex: 1;
   padding: 18px 18px calc(var(--nav-h) + 28px);
   overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 .page{ display: none; animation: pageIn .28s ease; }
 .page--active{ display: block; }
