@@ -1,16 +1,17 @@
-const CACHE_NAME = 'buku-kas-aul-v1';
+const CACHE_NAME = 'buku-kas-aul-v2';
 // Daftarkan semua file utama Anda di sini agar bisa diakses offline
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
-  './style.css'
-  './script.js'
+  './style.css',
+  './script.js',
   './loogo-192.png',
   './loogo-512.png'
 ];
 
 // Tahap Install: Menyimpan file ke dalam cache
 self.addEventListener('install', (event) => {
+  self.skipWaiting(); // langsung aktifkan versi baru, tidak menunggu semua tab ditutup
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(ASSETS_TO_CACHE);
@@ -29,7 +30,7 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim()) // langsung ambil alih semua tab yang terbuka
   );
 });
 
