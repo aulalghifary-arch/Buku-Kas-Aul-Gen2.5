@@ -116,20 +116,83 @@ button:focus-visible, input:focus-visible{
 }
 
 /* ---------------------------------- APP SHELL ---------------------------------- */
+/* Disembunyikan sampai autentikasi berhasil (lihat .auth-screen di bawah dan
+   class body.authed yang ditambahkan lewat JS setelah sesi Supabase valid). */
 .app-shell{
+  display: none;
   max-width: 480px;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   margin: 0 auto;
   background: var(--bg-app);
   position: relative;
   box-shadow: var(--shadow-lg);
-  display: flex;
   flex-direction: column;
   overflow-x: hidden;
 }
+body.authed .app-shell{ display: flex; }
+body.authed .auth-screen{ display: none; }
 @media (min-width: 540px){
   body{ background: linear-gradient(160deg,#0d2420,#141b2c 60%,#241f38); }
-  .app-shell{ min-height: 100vh; margin: 0 auto; }
+  .app-shell{ height: 100vh; height: 100dvh; margin: 0 auto; }
+}
+
+/* ---------------------------------- AUTH SCREEN (login/daftar) ---------------------------------- */
+.auth-screen{
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 20px;
+  background: var(--gradient-header, var(--gradient-primary));
+}
+.auth-card{
+  width: 100%;
+  max-width: 380px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 30px 26px 26px;
+}
+.auth-card__brand{ display: flex; align-items: center; gap: 12px; justify-content: center; margin-bottom: 26px; }
+.auth-card__logo{
+  width: 44px; height: 44px; border-radius: 13px;
+  background: var(--gradient-primary); color: var(--c-brass-light);
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.auth-card__brand-text{ display: flex; flex-direction: column; line-height: 1.15; }
+.auth-card__title{ font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--text-primary); }
+.auth-card__sub{ font-size: 10.5px; font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase; color: var(--c-brass); }
+
+.auth-form__title{ font-family: var(--font-display); font-weight: 700; font-size: 19px; text-align: center; margin-bottom: 4px; }
+.auth-form__sub{ font-size: 12.5px; color: var(--text-muted); text-align: center; margin-bottom: 20px; }
+.auth-form .text-field{ margin-bottom: 14px; }
+.auth-form__error{
+  font-size: 12.5px; color: var(--c-coral); background: var(--c-coral-soft);
+  padding: 10px 13px; border-radius: var(--radius-sm); margin-bottom: 14px; line-height: 1.4;
+}
+.auth-form__info{
+  font-size: 12.5px; color: var(--c-emerald-light); background: var(--c-emerald-soft);
+  padding: 10px 13px; border-radius: var(--radius-sm); margin-bottom: 14px; line-height: 1.4;
+}
+.auth-form__toggle{
+  width: 100%; text-align: center; margin-top: 16px;
+  font-size: 12.5px; color: var(--text-secondary); font-weight: 500;
+}
+.auth-form__toggle span{ color: var(--c-emerald-light); font-weight: 700; }
+
+.auth-not-configured{
+  text-align: center; color: var(--c-coral);
+  background: var(--c-coral-soft); border-radius: var(--radius-md);
+  padding: 18px 16px; margin-bottom: 20px;
+}
+.auth-not-configured svg{ margin-bottom: 8px; }
+.auth-not-configured p{ font-size: 12.5px; line-height: 1.5; margin-top: 6px; color: var(--text-secondary); }
+.auth-not-configured p strong{ color: var(--c-coral); font-size: 13.5px; }
+.auth-not-configured code{
+  background: var(--bg-sunken); padding: 1px 6px; border-radius: 5px;
+  font-size: 11.5px; color: var(--text-primary);
 }
 
 /* ---------------------------------- HEADER ---------------------------------- */
@@ -174,9 +237,11 @@ button:focus-visible, input:focus-visible{
 /* ---------------------------------- MAIN / PAGES ---------------------------------- */
 .app-main{
   flex: 1;
+  min-height: 0;
   padding: 18px 18px calc(var(--nav-h) + 28px);
   overflow-y: auto;
   overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 .page{ display: none; animation: pageIn .28s ease; }
 .page--active{ display: block; }
