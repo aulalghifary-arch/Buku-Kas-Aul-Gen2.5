@@ -13,6 +13,8 @@
    10. Invoice / cetak PDF (jsPDF)
    11. Opsi (cari, tema, backup, restore, reset, transfer)
    12. Navigasi & inisialisasi
+   13. SUPABASE: konfigurasi, autentikasi
+   14. SUPABASE: pemulihan & pencadangan data (cloud)
    ========================================================================== */
 
 /* ---------------------------------------------------------------------- */
@@ -65,10 +67,8 @@ function debounce(fn, ms){
 const DB_KEY_PREFIX = 'bukukasaul_gen2_v1';
 let DB = null;
 let STORAGE_AVAILABLE = true;
-let currentUser = null; // diisi setelah login Supabase berhasil (lihat bagian AUTH di bawah)
+let currentUser = null; 
 
-/** Kunci localStorage dibuat unik per akun yang sedang login, supaya data
-    beberapa akun di perangkat/browser yang sama tidak tertukar. */
 function getDbKey(){
   return currentUser ? `${DB_KEY_PREFIX}_${currentUser.id}` : DB_KEY_PREFIX;
 }
@@ -90,9 +90,6 @@ function defaultData(){
   };
 }
 
-/** Menerima format lama (array datar) maupun baru ({income:[],expense:[]}).
-    Data lama dipindahkan ke KEDUA kategori supaya tidak ada yang hilang;
-    pengguna tinggal menghapus yang tidak relevan lewat picker keterangan. */
 function normalizeDescriptions(desc){
   if(Array.isArray(desc)) return { income: desc.slice(), expense: desc.slice() };
   if(desc && typeof desc === 'object'){
@@ -287,9 +284,6 @@ async function swalConfirmInfo(title, text){
   return res.isConfirmed;
 }
 
-/* --- Kalender & pemilih waktu KUSTOM (bukan <input type="date/time">) ---
-   Dibangun sepenuhnya dengan tombol/HTML biasa agar TIDAK memicu date/time
-   picker bawaan Android/iOS — semuanya tetap tampil bertema SweetAlert2. */
 const WEEKDAYS_ID = ['Mg','Sn','Sl','Rb','Km','Jm','Sb'];
 
 function daysInMonth(year, month){ return new Date(year, month+1, 0).getDate(); }
@@ -398,7 +392,7 @@ function todayRange(){ const t = localDateStr(); return { from: t, to: t }; }
 function yesterdayRange(){ const y = shiftDate(localDateStr(), -1); return { from: y, to: y }; }
 function thisWeekRange(){
   const d = new Date();
-  const dow = d.getDay(); // 0=Minggu .. 6=Sabtu
+  const dow = d.getDay(); 
   const diffToMonday = dow === 0 ? -6 : (1 - dow);
   const monday = new Date(d); monday.setDate(d.getDate() + diffToMonday);
   const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
@@ -421,9 +415,6 @@ function formatRangeLabel(range){
   return `${formatDateID(range.from)} – ${formatDateID(range.to)}`;
 }
 
-/** Mengembalikan {mode:'range',from,to} | {mode:'all'} | {mode:'cancel'}
-    Menu utama berupa daftar shortcut; "Rentang Custom" baru membuka
-    kalender kustom berurutan (dari -> sampai). */
 async function pickDateRangeDialog(current){
   const result = await swalFire({
     title: 'Rentang Tanggal',
@@ -473,7 +464,6 @@ async function pickDateRangeDialog(current){
     default: return { mode: 'cancel' };
   }
 }
-
 
 /* ---------------------------------------------------------------------- */
 /* 5. WALLET: render, picker, tambah/hapus                                 */
@@ -707,7 +697,6 @@ function wireDescriptionPicker(popup, category, onSelect){
   });
 }
 
-/** category: 'income' | 'expense'. onSelect(desc) dipanggil saat item dipilih. */
 async function openDescriptionPicker(category, onSelect){
   await swalFire({
     title: `Keterangan ${category === 'income' ? 'Pendapatan' : 'Pengeluaran'}`,
@@ -868,9 +857,6 @@ async function handleDeleteTx(tx){
 }
 
 async function openManualEditForm(tx){
-  // Alur bertahap: kategori -> tanggal -> waktu -> keterangan & nominal.
-  // Dipecah begini (bukan satu form gabungan) supaya kalender/pemilih waktu
-  // kustom tidak perlu bersarang di dalam popup lain.
   const type = await pickCategoryValue(tx.type);
   if(!type) return openTxActionPopup(tx);
   const date = await pickDate(tx.date, 'Tanggal Transaksi');
@@ -1007,10 +993,6 @@ function deleteDebtOrReceivableCascade(kind, id){
   const cfg = KIND_CONFIG[kind];
   const record = DB[cfg.store].find(r=>r.id===id);
   if(!record) return;
-  // Data hasil impor dari Supabase tidak punya transaksi induk yang menambah/
-  // mengurangi saldo (efeknya sudah tercakup lewat transaksi yang diimpor
-  // terpisah), jadi saldo TIDAK dikoreksi ulang di sini untuk data itu --
-  // supaya tidak terjadi penyesuaian saldo dobel.
   if(!record.imported){
     applyBalanceDelta(record.walletId, -cfg.initialSign * record.amount);
     record.payments.forEach(p=> applyBalanceDelta(record.walletId, -cfg.paymentSign * p.amount));
@@ -1151,7 +1133,6 @@ async function openEditRecordForm(kind, id){
   const record = DB[cfg.store].find(r=>r.id===id);
   if(!record) return;
 
-  // Alur bertahap: tanggal -> waktu -> nominal (memakai picker kustom di atas).
   const date = await pickDate(record.date, `Tanggal ${cfg.label}`);
   if(!date) return openRecordActionPopup(kind, id);
   const time = await pickTime(record.time, `Waktu ${cfg.label}`);
@@ -1354,8 +1335,6 @@ function renderInvoicePreview(){
   `;
 }
 
-/* Logo aplikasi (loogo-512.png) di-cache sebagai data URL sekali saja,
-   supaya tidak perlu memuat ulang gambar setiap kali PDF dibuat. */
 let _invoiceLogoCache = null;
 function loadInvoiceLogoDataUrl(){
   if(_invoiceLogoCache !== null) return Promise.resolve(_invoiceLogoCache);
@@ -1400,7 +1379,6 @@ async function generateInvoicePdf(){
 
   let y = HEADER_H + 28;
 
-  /* -------- Rincian Pendapatan -------- */
   if(incomeEntries.length){
     doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...EMERALD);
     doc.text('Rincian Pendapatan', MARGIN, y);
@@ -1421,7 +1399,6 @@ async function generateInvoicePdf(){
     y = doc.lastAutoTable.finalY + 26;
   }
 
-  /* -------- Rincian Pengeluaran -------- */
   if(expenseEntries.length){
     if(y > PAGE_H - FOOTER_H - 90){ doc.addPage(); y = HEADER_H + 28; }
     doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...CORAL);
@@ -1449,7 +1426,6 @@ async function generateInvoicePdf(){
     y += 30;
   }
 
-  /* -------- Kotak ringkasan saldo -------- */
   const boxH = 92;
   if(y > PAGE_H - FOOTER_H - boxH - 10){ doc.addPage(); y = HEADER_H + 28; }
   const boxW = RIGHT - MARGIN;
@@ -1476,7 +1452,6 @@ async function generateInvoicePdf(){
   doc.setTextColor(...netColor);
   doc.text(rp(data.net), RIGHT - padX, y + 78, { align: 'right' });
 
-  /* -------- Header (logo) & footer di setiap halaman -------- */
   const totalPages = doc.internal.getNumberOfPages();
   for(let i = 1; i <= totalPages; i++){
     doc.setPage(i);
@@ -1508,7 +1483,7 @@ async function generateInvoicePdf(){
 }
 
 /* ---------------------------------------------------------------------- */
-/* 11. OPSI: cari, tema, backup, restore, reset, transfer                   */
+/* 11. OPSI: cari, tema, reset, transfer (Pencadangan file dihapus)         */
 /* ---------------------------------------------------------------------- */
 function getTxDateBounds(){
   if(!DB.transactions.length) return defaultMonthRange();
@@ -1526,8 +1501,7 @@ async function openOptionsMenu(){
         <button type="button" class="swal-list__item" id="opt-search">${ICONS.search}<span>Cari Transaksi</span></button>
         <button type="button" class="swal-list__item" id="opt-theme">${isDark?ICONS.sun:ICONS.moon}<span>Mode ${isDark?'Terang':'Gelap'}</span></button>
         <div class="swal-list__divider"></div>
-        <button type="button" class="swal-list__item" id="opt-backup">${ICONS.download}<span>Backup Data</span></button>
-        <button type="button" class="swal-list__item" id="opt-restore">${ICONS.upload}<span>Pulihkan Data</span></button>
+        <button type="button" class="swal-list__item" id="opt-backup-cloud">${ICONS.cloud}<span>Cadangkan ke Supabase</span></button>
         <button type="button" class="swal-list__item" id="opt-restore-cloud">${ICONS.cloud}<span>Pulihkan dari Supabase</span></button>
         <button type="button" class="swal-list__item" id="opt-transfer">${ICONS.swap}<span>Transfer Antar Dompet</span></button>
         <div class="swal-list__divider"></div>
@@ -1540,8 +1514,7 @@ async function openOptionsMenu(){
     didOpen: (popup) => {
       $('#opt-search', popup).addEventListener('click', ()=>{ Swal.close(); openSearchDialog(); });
       $('#opt-theme', popup).addEventListener('click', ()=>{ Swal.close(); toggleTheme(); });
-      $('#opt-backup', popup).addEventListener('click', ()=>{ Swal.close(); backupData(); });
-      $('#opt-restore', popup).addEventListener('click', ()=>{ Swal.close(); restoreDataPrompt(); });
+      $('#opt-backup-cloud', popup).addEventListener('click', ()=>{ Swal.close(); backupToSupabase(); });
       $('#opt-restore-cloud', popup).addEventListener('click', ()=>{ Swal.close(); restoreFromSupabaseData(); });
       $('#opt-transfer', popup).addEventListener('click', ()=>{ Swal.close(); openTransferDialog(); });
       $('#opt-logout', popup).addEventListener('click', ()=>{ Swal.close(); logoutPrompt(); });
@@ -1550,9 +1523,6 @@ async function openOptionsMenu(){
   });
 }
 
-/* Warna status bar (address bar/notch) untuk tiap mode.
-   Nilainya mengikuti warna nyata header (.app-header) agar menyatu,
-   bukan nilai statis terpisah yang bisa "lupa" disinkronkan. */
 const STATUS_BAR_COLOR = { light: '#0B4F45', dark: '#0B4F45' };
 
 function syncStatusBarColor(){
@@ -1569,53 +1539,6 @@ function toggleTheme(){
   syncStatusBarColor();
   if(currentPage === 'charts') renderChart();
   notify(`Mode ${DB.settings.theme==='dark'?'gelap':'terang'} diaktifkan`);
-}
-
-function backupData(){
-  const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `backup-bukukasaul-${localDateStr()}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  notify('Backup data berhasil diunduh');
-}
-
-async function restoreDataPrompt(){
-  const { value: file } = await swalFire({
-    title: 'Pulihkan Data',
-    html: `<p class="swal-theme-html" style="margin-bottom:10px;">Pilih file backup (.json) yang sebelumnya diunduh. Data saat ini akan digantikan.</p>`,
-    input: 'file',
-    inputAttributes: { accept: '.json', 'aria-label': 'Unggah file backup' },
-    showCancelButton: true,
-    confirmButtonText: 'Pulihkan',
-    cancelButtonText: 'Batal'
-  });
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    try{
-      const parsed = JSON.parse(e.target.result);
-      if(!parsed || !Array.isArray(parsed.wallets)) throw new Error('format tidak valid');
-      const ok = await swalConfirmDanger('Timpa Data Saat Ini?', 'Seluruh data yang ada sekarang akan digantikan dengan data dari file backup ini.');
-      if(ok){
-        DB = normalizeDB(parsed);
-        saveDB();
-        document.body.classList.toggle('dark', DB.settings.theme === 'dark');
-        syncStatusBarColor();
-        historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
-        chartRange = todayRange(); invoiceRange = todayRange();
-        renderAll();
-        notify('Data berhasil dipulihkan');
-      }
-    }catch(err){
-      notify('File backup tidak valid', 'error');
-    }
-  };
-  reader.readAsText(file);
 }
 
 async function resetDataPrompt(){
@@ -1936,10 +1859,6 @@ function wireStaticEvents(){
   });
 }
 
-/** Jaring pengaman kedua untuk bug "landscape palsu saat keyboard terbuka":
-    membandingkan tinggi visualViewport (area yang benar-benar terlihat, tidak
-    termasuk keyboard) dengan tinggi window. Jika bedanya besar, keyboard
-    dianggap terbuka -> paksa tata letak satu kolom lewat class body.kb-open. */
 function setupKeyboardWatcher(){
   if(!window.visualViewport) return;
   const vv = window.visualViewport;
@@ -1953,10 +1872,6 @@ function setupKeyboardWatcher(){
 
 let staticEventsWired = false;
 
-/** initApp() dijalankan setiap kali sesi berhasil (termasuk login ulang
-    setelah logout tanpa reload halaman) -- makanya wireStaticEvents() &
-    setupKeyboardWatcher() dijaga oleh staticEventsWired supaya listener
-    tidak terpasang berkali-kali. */
 function initApp(){
   loadDB();
   document.body.classList.toggle('dark', DB.settings.theme === 'dark');
@@ -1981,16 +1896,12 @@ function initApp(){
 /* ---------------------------------------------------------------------- */
 /* 13. SUPABASE: konfigurasi, autentikasi (login/daftar/keluar)             */
 /* ---------------------------------------------------------------------- */
-// >>> GANTI dua nilai berikut dengan kredensial proyek Supabase kamu. <<<
-// Lokasi: Dashboard Supabase -> Project Settings -> API
-//   SUPABASE_URL       = "Project URL"
-//   SUPABASE_ANON_KEY  = "anon" / "public" key (BUKAN service_role key)
 const SUPABASE_URL = 'https://bwijginbudwtgeiewcnh.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ3aWpnaW5idWR3dGdlaWV3Y25oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5MTg1MTksImV4cCI6MjA5NjQ5NDUxOX0.1gUBjSzCAmRrfnZrEQbdP10EttMuQ71m2ryswjxRONo';
 
 let supabaseClient = null;
 let supabaseConfigured = false;
-let authMode = 'login'; // 'login' | 'register'
+let authMode = 'login'; 
 let supabaseRestoreOffered = false;
 
 function initSupabaseClient(){
@@ -2119,12 +2030,9 @@ async function checkAuthAndStart(){
 }
 
 /* ---------------------------------------------------------------------- */
-/* 14. SUPABASE: pemulihan data lama (transaksi, hutang/piutang, kategori)  */
+/* 14. SUPABASE: pemulihan & pencadangan data (cloud)                       */
 /* ---------------------------------------------------------------------- */
-// Tabel donasi & chat sengaja diabaikan (tidak dipakai aplikasi ini).
-// Konversi nilai 'jenis'/'status' di bawah ini adalah TEBAKAN TERBAIK
-// berdasarkan nama kolom yang terlihat -- sesuaikan bila hasil pulihan
-// datanya terbalik (pendapatan/pengeluaran atau hutang/piutang tertukar).
+
 function guessTxType(jenis){
   const j = String(jenis||'').toLowerCase().trim();
   if(['pendapatan','masuk','income','pemasukan'].includes(j)) return 'income';
@@ -2149,6 +2057,86 @@ function findOrCreateWalletByName(name){
   let w = DB.wallets.find(x=>x.name.toLowerCase()===name.toLowerCase());
   if(!w){ w = { id: uid('w'), name, balance: 0, deletable: true }; DB.wallets.push(w); }
   return w;
+}
+
+// ---------------------------------------------------------
+// FUNGSI CADANGKAN KE SUPABASE (BARU)
+// ---------------------------------------------------------
+async function backupToSupabase() {
+  if(!supabaseClient || !currentUser) {
+    notify('Belum terhubung ke Supabase', 'error'); return;
+  }
+  const ok = await swalConfirmInfo('Cadangkan ke Supabase?', 'Seluruh data lokal akan diunggah ke cloud. Data lama Anda di cloud akan digantikan dengan data saat ini.');
+  if(!ok) return;
+
+  swalFire({
+    title: 'Mencadangkan...', text: 'Mohon tunggu sebentar',
+    allowOutsideClick: false, showConfirmButton: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  try {
+    const uid = currentUser.id;
+
+    // 1. Siapkan data Transaksi untuk Supabase
+    const txPayload = DB.transactions.map(tx => ({
+      user_id: uid,
+      dompet: getWalletName(tx.walletId),
+      jenis: tx.type === 'income' ? 'pendapatan' : 'pengeluaran',
+      jumlah: tx.amount,
+      tanggal: tx.date,
+      jam: tx.time,
+      kategori: tx.description
+    }));
+
+    // 2. Siapkan data Hutang/Piutang untuk Supabase
+    const hutangPayload = [];
+    DB.debts.forEach(d => {
+      hutangPayload.push({
+        user_id: uid, nama: d.name, nominal: d.amount,
+        sisa: d.remaining, terbayar: d.amount - d.remaining,
+        tanggal: d.date, status: d.status, jenis: 'hutang'
+      });
+    });
+    DB.receivables.forEach(r => {
+      hutangPayload.push({
+        user_id: uid, nama: r.name, nominal: r.amount,
+        sisa: r.remaining, terbayar: r.amount - r.remaining,
+        tanggal: r.date, status: r.status, jenis: 'piutang'
+      });
+    });
+
+    // 3. Siapkan data Pengaturan (Kategori)
+    const pengaturanPayload = {
+      user_id: uid,
+      kategori_masuk: DB.descriptions.income,
+      kategori_keluar: DB.descriptions.expense
+    };
+
+    // 4. Hapus data lama pengguna ini agar tidak terjadi duplikasi saat sinkronisasi
+    await supabaseClient.from('transaksi').delete().eq('user_id', uid);
+    await supabaseClient.from('hutang').delete().eq('user_id', uid);
+    await supabaseClient.from('pengaturan').delete().eq('user_id', uid);
+
+    // 5. Masukkan data baru yang disiapkan
+    if (txPayload.length > 0) {
+      const { error: errTx } = await supabaseClient.from('transaksi').insert(txPayload);
+      if (errTx) throw errTx;
+    }
+    if (hutangPayload.length > 0) {
+      const { error: errHutang } = await supabaseClient.from('hutang').insert(hutangPayload);
+      if (errHutang) throw errHutang;
+    }
+    const { error: errPengaturan } = await supabaseClient.from('pengaturan').insert(pengaturanPayload);
+    if (errPengaturan) throw errPengaturan;
+
+    Swal.close();
+    notify('Data berhasil dicadangkan ke Supabase');
+  } catch(err) {
+    Swal.close();
+    console.error(err);
+    notify('Gagal mencadangkan: ' + (err.message || 'Error tidak diketahui'), 'error');
+  }
 }
 
 async function maybeOfferSupabaseRestore(){
