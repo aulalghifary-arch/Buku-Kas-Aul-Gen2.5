@@ -559,6 +559,7 @@ body.dark .segmented__btn--active{ color: var(--text-on-dark); }
 .invoice-row__name{ font-weight: 500; color: var(--text-secondary); }
 .invoice-row__value{ font-family: var(--font-display); font-weight: 700; font-variant-numeric: tabular-nums; }
 .invoice-total{ display: flex; justify-content: space-between; padding-top: 12px; margin-top: 4px; font-family: var(--font-display); font-weight: 800; font-size: 15.5px; }
+.invoice-subtotal{ display: flex; justify-content: space-between; padding-top: 8px; margin-top: 2px; border-top: 1px solid var(--border-mid); font-family: var(--font-display); font-weight: 700; font-size: 13px; }
 
 /* ---------------------------------- TOASTS ---------------------------------- */
 .toast-root{ position: fixed; bottom: calc(var(--nav-h) + 14px); left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: center; width: 100%; max-width: 460px; padding: 0 16px; pointer-events: none; }
