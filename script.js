@@ -1311,36 +1311,51 @@ function renderChart(){
 /* ---------------------------------------------------------------------- */
 let invoiceRange = todayRange();
 
+/** Karakter di luar Basic Multilingual Plane (mis. emoji seperti 🏦, 🔁) tidak
+    didukung oleh font standar jsPDF (Helvetica) dan membuat SELURUH teks pada
+    baris tersebut tercetak rusak/berspasi acak. Fungsi ini membersihkan teks
+    sebelum dikirim ke jsPDF, supaya nama dompet/keterangan yang mengandung
+    emoji (mis. hasil ketik dari keyboard Android) tetap tercetak rapi. */
+function pdfSafeText(str){
+  str = String(str == null ? '' : str);
+  str = str.replace(/[\u{10000}-\u{10FFFF}]/gu, '');            // emoji astral (🏦 🔁 😀 dst.)
+  str = str.replace(/[\u2190-\u21FF\u2300-\u27BF\uFE0F\u200D]/g, ''); // simbol/emoji di BMP (☕ ✂ ➜ dst.)
+  return str.replace(/\s{2,}/g, ' ').trim();
+}
+
 function groupSum(txs){
   const map = {};
   txs.forEach(t=>{ map[t.description] = (map[t.description] || 0) + t.amount; });
   return map;
 }
 
+/** Transaksi dijumlahkan per nama keterangan, diurutkan dari nominal terbesar
+    ke terkecil (tanggal/waktu individual tidak relevan di sini karena rentang
+    tanggal laporan sudah tertera di kop cetak). */
 function computeInvoiceData(){
   const txs = DB.transactions.filter(t=>t.date>=invoiceRange.from && t.date<=invoiceRange.to);
   const incomeMap = groupSum(txs.filter(t=>t.type==='income'));
   const expenseMap = groupSum(txs.filter(t=>t.type==='expense'));
-  const incomeTotal = Object.values(incomeMap).reduce((a,b)=>a+b,0);
-  const expenseTotal = Object.values(expenseMap).reduce((a,b)=>a+b,0);
-  return { incomeMap, expenseMap, incomeTotal, expenseTotal, net: incomeTotal - expenseTotal };
+  const incomeEntries = Object.entries(incomeMap).sort((a,b)=>b[1]-a[1]);
+  const expenseEntries = Object.entries(expenseMap).sort((a,b)=>b[1]-a[1]);
+  const incomeTotal = incomeEntries.reduce((a,[,v])=>a+v,0);
+  const expenseTotal = expenseEntries.reduce((a,[,v])=>a+v,0);
+  return { incomeEntries, expenseEntries, incomeTotal, expenseTotal, net: incomeTotal - expenseTotal };
 }
 
 function renderInvoicePreview(){
   $('#invoice-range').textContent = formatRangeLabel(invoiceRange);
   const data = computeInvoiceData();
   const container = $('#invoice-preview');
-  const incomeEntries = Object.entries(data.incomeMap);
-  const expenseEntries = Object.entries(data.expenseMap);
 
-  if(!incomeEntries.length && !expenseEntries.length){
+  if(!data.incomeEntries.length && !data.expenseEntries.length){
     container.innerHTML = emptyStateHtml('Belum ada data', 'Tidak ada transaksi pada rentang tanggal ini');
     return;
   }
 
-  const incomeRows = incomeEntries.map(([k,v])=>`
+  const incomeRows = data.incomeEntries.map(([k,v])=>`
     <div class="invoice-row"><span class="invoice-row__name">${escapeHtml(k)}</span><span class="invoice-row__value" style="color:var(--c-emerald-light)">${formatRupiah(v)}</span></div>`).join('');
-  const expenseRows = expenseEntries.map(([k,v])=>`
+  const expenseRows = data.expenseEntries.map(([k,v])=>`
     <div class="invoice-row"><span class="invoice-row__name">${escapeHtml(k)}</span><span class="invoice-row__value" style="color:var(--c-coral)">${formatRupiah(v)}</span></div>`).join('');
 
   container.innerHTML = `
@@ -1348,19 +1363,25 @@ function renderInvoicePreview(){
     <div class="invoice-preview__meta">Laporan ${formatDateID(invoiceRange.from)} – ${formatDateID(invoiceRange.to)}</div>
     ${incomeRows ? `<div class="list-heading" style="margin-top:2px;">Pendapatan</div>${incomeRows}` : ''}
     ${expenseRows ? `<div class="list-heading" style="margin-top:14px;">Pengeluaran</div>${expenseRows}` : ''}
+    <div class="invoice-row" style="margin-top:14px;"><span class="invoice-row__name">Total Pendapatan</span><span class="invoice-row__value" style="color:var(--c-emerald-light)">${formatRupiah(data.incomeTotal)}</span></div>
+    <div class="invoice-row"><span class="invoice-row__name">Total Pengeluaran</span><span class="invoice-row__value" style="color:var(--c-coral)">${formatRupiah(data.expenseTotal)}</span></div>
     <div class="invoice-total"><span>Saldo Bersih</span><span style="color:${data.net>=0?'var(--c-emerald-light)':'var(--c-coral)'}">${formatRupiah(data.net)}</span></div>
   `;
 }
 
 function generateInvoicePdf(){
   const data = computeInvoiceData();
-  const incomeEntries = Object.entries(data.incomeMap);
-  const expenseEntries = Object.entries(data.expenseMap);
+
+  if(!data.incomeEntries.length && !data.expenseEntries.length){
+    notify('Tidak ada transaksi pada rentang tanggal ini', 'error');
+    return;
+  }
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const marginX = 40;
   const pageRight = 555;
+  const pageBottom = 800;
   let y = 56;
 
   doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(11,79,69);
@@ -1371,48 +1392,73 @@ function generateInvoicePdf(){
   doc.text(`Periode: ${formatDateID(invoiceRange.from)} - ${formatDateID(invoiceRange.to)}`, marginX, y); y += 10;
   doc.setDrawColor(220,224,228); doc.line(marginX, y+8, pageRight, y+8); y += 26;
 
-  if(incomeEntries.length){
-    doc.autoTable({
+  const baseTableOpts = {
+    theme: 'grid',
+    styles: { font: 'helvetica', lineColor: [225,229,232], lineWidth: 0.5, fontSize: 10, cellPadding: 7 },
+    columnStyles: { 1: { halign: 'right', fontStyle: 'bold', cellWidth: 110 } },
+    margin: { left: marginX, right: 40, top: 50, bottom: 50 }
+  };
+
+  if(data.incomeEntries.length){
+    doc.autoTable(Object.assign({}, baseTableOpts, {
       startY: y,
       head: [['Keterangan (Pendapatan)','Nominal']],
-      body: incomeEntries.map(([k,v])=>[k, 'Rp ' + v.toLocaleString('id-ID')]),
-      theme: 'plain',
-      headStyles: { fillColor: [228,241,236], textColor: [11,79,69], fontStyle: 'bold' },
-      columnStyles: { 1: { halign: 'right' } },
-      styles: { fontSize: 10, cellPadding: 6 },
-      margin: { left: marginX, right: 40 }
-    });
-    y = doc.lastAutoTable.finalY + 18;
+      body: data.incomeEntries.map(([k,v])=>[pdfSafeText(k), formatRupiah(v)]),
+      headStyles: { fillColor: [11,79,69], textColor: [255,255,255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [237,246,242] },
+      bodyStyles: { textColor: [11,79,69] }
+    }));
+    y = doc.lastAutoTable.finalY + 20;
   }
-  if(expenseEntries.length){
-    doc.autoTable({
+
+  if(data.expenseEntries.length){
+    if(y > pageBottom - 100){ doc.addPage(); y = 56; }
+    doc.autoTable(Object.assign({}, baseTableOpts, {
       startY: y,
       head: [['Keterangan (Pengeluaran)','Nominal']],
-      body: expenseEntries.map(([k,v])=>[k, 'Rp ' + v.toLocaleString('id-ID')]),
-      theme: 'plain',
-      headStyles: { fillColor: [251,234,231], textColor: [214,97,79], fontStyle: 'bold' },
-      columnStyles: { 1: { halign: 'right' } },
-      styles: { fontSize: 10, cellPadding: 6 },
-      margin: { left: marginX, right: 40 }
-    });
-    y = doc.lastAutoTable.finalY + 22;
-  }
-  if(!incomeEntries.length && !expenseEntries.length){
-    doc.setFontSize(11); doc.setTextColor(140,140,140);
-    doc.text('Tidak ada transaksi pada rentang tanggal ini.', marginX, y);
-    y += 24;
+      body: data.expenseEntries.map(([k,v])=>[pdfSafeText(k), formatRupiah(v)]),
+      headStyles: { fillColor: [214,97,79], textColor: [255,255,255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [253,240,238] },
+      bodyStyles: { textColor: [214,97,79] }
+    }));
+    y = doc.lastAutoTable.finalY + 24;
   }
 
-  if(y > 760){ doc.addPage(); y = 56; }
-  doc.setDrawColor(220,224,228); doc.line(marginX, y, pageRight, y); y += 20;
+  if(y > pageBottom - 110){ doc.addPage(); y = 56; }
+
+  // ---------- Kesimpulan akhir: Total Pendapatan, Total Pengeluaran, Saldo Bersih ----------
+  doc.setDrawColor(220,224,228); doc.line(marginX, y, pageRight, y); y += 22;
+
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(90,100,110);
+  doc.text('Total Pendapatan', marginX, y);
+  doc.setFont('helvetica','bold'); doc.setTextColor(11,79,69);
+  doc.text(formatRupiah(data.incomeTotal), pageRight, y, { align: 'right' });
+  y += 18;
+
+  doc.setFont('helvetica','normal'); doc.setTextColor(90,100,110);
+  doc.text('Total Pengeluaran', marginX, y);
+  doc.setFont('helvetica','bold'); doc.setTextColor(214,97,79);
+  doc.text(formatRupiah(data.expenseTotal), pageRight, y, { align: 'right' });
+  y += 24;
+
+  doc.setDrawColor(220,224,228); doc.line(marginX, y, pageRight, y); y += 22;
+
   const col = data.net >= 0 ? [11,79,69] : [214,97,79];
-  doc.setFont('helvetica','bold'); doc.setFontSize(12.5);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13);
   doc.setTextColor(col[0], col[1], col[2]);
   doc.text('Saldo Bersih', marginX, y);
-  doc.text('Rp ' + data.net.toLocaleString('id-ID'), pageRight, y, { align: 'right' });
+  doc.text(formatRupiah(data.net), pageRight, y, { align: 'right' });
 
   doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(160,160,160);
-  doc.text(`Dicetak pada ${formatDateLong(localDateStr())} ${localTimeStr()}`, marginX, 800);
+  doc.text(`Dicetak pada ${formatDateLong(localDateStr())} ${localTimeStr()}`, marginX, pageBottom);
+
+  // Nomor halaman (ditulis di akhir supaya total halaman sudah pasti/akurat)
+  const pageCount = doc.internal.getNumberOfPages();
+  for(let p = 1; p <= pageCount; p++){
+    doc.setPage(p);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(160,160,160);
+    doc.text(`Halaman ${p} / ${pageCount}`, pageRight, pageBottom, { align: 'right' });
+  }
 
   const fname = `Laporan-BukuKasAul-${invoiceRange.from}_${invoiceRange.to}.pdf`;
   doc.save(fname);
