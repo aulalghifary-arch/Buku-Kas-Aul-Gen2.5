@@ -20,6 +20,8 @@
 /* ---------------------------------------------------------------------- */
 const ICONS = {
   calendar: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.5h17M8 3v3M16 3v3" stroke-linecap="round"/></svg>',
+  cloud: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18.5a4.5 4.5 0 0 1-.5-8.97 5.5 5.5 0 0 1 10.7-1.9A4.5 4.5 0 0 1 17 18.5H7Z"/><path d="M12 11v6.5M9.5 15l2.5-2.5 2.5 2.5"/></svg>',
+  logout: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5H6a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 6 19.5h3"/><path d="M16 15.5 20.5 11 16 6.5"/><path d="M20.5 11h-11"/></svg>',
   arrowUp: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
   arrowDown: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>',
   edit: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
@@ -60,9 +62,16 @@ function debounce(fn, ms){
 /* ---------------------------------------------------------------------- */
 /* 2. LAPISAN DATA (localStorage)                                          */
 /* ---------------------------------------------------------------------- */
-const DB_KEY = 'bukukasaul_gen2_v1';
+const DB_KEY_PREFIX = 'bukukasaul_gen2_v1';
 let DB = null;
 let STORAGE_AVAILABLE = true;
+let currentUser = null; // diisi setelah login Supabase berhasil (lihat bagian AUTH di bawah)
+
+/** Kunci localStorage dibuat unik per akun yang sedang login, supaya data
+    beberapa akun di perangkat/browser yang sama tidak tertukar. */
+function getDbKey(){
+  return currentUser ? `${DB_KEY_PREFIX}_${currentUser.id}` : DB_KEY_PREFIX;
+}
 
 function defaultData(){
   return {
@@ -113,7 +122,7 @@ function normalizeDB(obj){
 
 function loadDB(){
   try{
-    const raw = localStorage.getItem(DB_KEY);
+    const raw = localStorage.getItem(getDbKey());
     if(!raw){ DB = defaultData(); saveDB(); return DB; }
     DB = normalizeDB(JSON.parse(raw));
     return DB;
@@ -127,7 +136,7 @@ function loadDB(){
 
 function saveDB(){
   try{
-    localStorage.setItem(DB_KEY, JSON.stringify(DB));
+    localStorage.setItem(getDbKey(), JSON.stringify(DB));
     STORAGE_AVAILABLE = true;
   }catch(e){
     console.error('Gagal menyimpan data:', e);
@@ -477,7 +486,8 @@ function renderWalletCard(){
 
 function renderHomeSummary(){
   const w = getSelectedWallet();
-  const txs = DB.transactions.filter(t=>t.walletId===w.id);
+  const today = localDateStr();
+  const txs = DB.transactions.filter(t=>t.walletId===w.id && t.date===today);
   const income = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
   const expense = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
   $('#summary-income-value').textContent = formatRupiah(income);
@@ -938,7 +948,7 @@ function addDebtOrReceivable(kind, data){
   const record = {
     id, name: data.name, amount: data.amount, remaining: data.amount,
     date: data.date, time: data.time, walletId: wallet.id,
-    status: 'belum', payments: [], transactionId: txId
+    status: 'belum', payments: [], transactionId: txId, imported: false
   };
   const tx = {
     id: txId, walletId: wallet.id, type: cfg.txInitialType,
@@ -997,9 +1007,15 @@ function deleteDebtOrReceivableCascade(kind, id){
   const cfg = KIND_CONFIG[kind];
   const record = DB[cfg.store].find(r=>r.id===id);
   if(!record) return;
-  applyBalanceDelta(record.walletId, -cfg.initialSign * record.amount);
-  record.payments.forEach(p=> applyBalanceDelta(record.walletId, -cfg.paymentSign * p.amount));
-  const relatedTxIds = new Set([record.transactionId, ...record.payments.map(p=>p.transactionId)]);
+  // Data hasil impor dari Supabase tidak punya transaksi induk yang menambah/
+  // mengurangi saldo (efeknya sudah tercakup lewat transaksi yang diimpor
+  // terpisah), jadi saldo TIDAK dikoreksi ulang di sini untuk data itu --
+  // supaya tidak terjadi penyesuaian saldo dobel.
+  if(!record.imported){
+    applyBalanceDelta(record.walletId, -cfg.initialSign * record.amount);
+    record.payments.forEach(p=> applyBalanceDelta(record.walletId, -cfg.paymentSign * p.amount));
+  }
+  const relatedTxIds = new Set([record.transactionId, ...record.payments.map(p=>p.transactionId)].filter(Boolean));
   DB.transactions = DB.transactions.filter(t=>!relatedTxIds.has(t.id));
   DB[cfg.store] = DB[cfg.store].filter(r=>r.id!==id);
   saveDB();
@@ -1415,16 +1431,19 @@ function getTxDateBounds(){
 
 async function openOptionsMenu(){
   const isDark = document.body.classList.contains('dark');
+  const emailLine = currentUser ? `<p class="swal-theme-html" style="margin-top:-8px;word-break:break-all;">Masuk sebagai ${escapeHtml(currentUser.email||'')}</p>` : '';
   await swalFire({
     title: 'Opsi',
-    html: `<div class="swal-list">
+    html: `${emailLine}<div class="swal-list">
         <button type="button" class="swal-list__item" id="opt-search">${ICONS.search}<span>Cari Transaksi</span></button>
         <button type="button" class="swal-list__item" id="opt-theme">${isDark?ICONS.sun:ICONS.moon}<span>Mode ${isDark?'Terang':'Gelap'}</span></button>
         <div class="swal-list__divider"></div>
         <button type="button" class="swal-list__item" id="opt-backup">${ICONS.download}<span>Backup Data</span></button>
         <button type="button" class="swal-list__item" id="opt-restore">${ICONS.upload}<span>Pulihkan Data</span></button>
+        <button type="button" class="swal-list__item" id="opt-restore-cloud">${ICONS.cloud}<span>Pulihkan dari Supabase</span></button>
         <button type="button" class="swal-list__item" id="opt-transfer">${ICONS.swap}<span>Transfer Antar Dompet</span></button>
         <div class="swal-list__divider"></div>
+        <button type="button" class="swal-list__item" id="opt-logout">${ICONS.logout}<span>Keluar</span></button>
         <button type="button" class="swal-list__item swal-list__item--danger" id="opt-reset">${ICONS.warning}<span>Reset Data</span></button>
       </div>`,
     showConfirmButton: false,
@@ -1435,7 +1454,9 @@ async function openOptionsMenu(){
       $('#opt-theme', popup).addEventListener('click', ()=>{ Swal.close(); toggleTheme(); });
       $('#opt-backup', popup).addEventListener('click', ()=>{ Swal.close(); backupData(); });
       $('#opt-restore', popup).addEventListener('click', ()=>{ Swal.close(); restoreDataPrompt(); });
+      $('#opt-restore-cloud', popup).addEventListener('click', ()=>{ Swal.close(); restoreFromSupabaseData(); });
       $('#opt-transfer', popup).addEventListener('click', ()=>{ Swal.close(); openTransferDialog(); });
+      $('#opt-logout', popup).addEventListener('click', ()=>{ Swal.close(); logoutPrompt(); });
       $('#opt-reset', popup).addEventListener('click', ()=>{ Swal.close(); resetDataPrompt(); });
     }
   });
@@ -1842,12 +1863,21 @@ function setupKeyboardWatcher(){
   handleResize();
 }
 
-function init(){
+let staticEventsWired = false;
+
+/** initApp() dijalankan setiap kali sesi berhasil (termasuk login ulang
+    setelah logout tanpa reload halaman) -- makanya wireStaticEvents() &
+    setupKeyboardWatcher() dijaga oleh staticEventsWired supaya listener
+    tidak terpasang berkali-kali. */
+function initApp(){
   loadDB();
-  if(DB.settings.theme === 'dark') document.body.classList.add('dark');
+  document.body.classList.toggle('dark', DB.settings.theme === 'dark');
   syncStatusBarColor();
-  wireStaticEvents();
-  setupKeyboardWatcher();
+  if(!staticEventsWired){
+    wireStaticEvents();
+    setupKeyboardWatcher();
+    staticEventsWired = true;
+  }
   resetEntryForm();
   updateHutangDraftUI();
   updatePiutangDraftUI();
@@ -1857,6 +1887,283 @@ function init(){
   if(!STORAGE_AVAILABLE){
     notify('Penyimpanan browser tidak tersedia. Data tidak akan tersimpan permanen di perangkat ini.', 'error');
   }
+  maybeOfferSupabaseRestore();
 }
 
-document.addEventListener('DOMContentLoaded', init);
+/* ---------------------------------------------------------------------- */
+/* 13. SUPABASE: konfigurasi, autentikasi (login/daftar/keluar)             */
+/* ---------------------------------------------------------------------- */
+// >>> GANTI dua nilai berikut dengan kredensial proyek Supabase kamu. <<<
+// Lokasi: Dashboard Supabase -> Project Settings -> API
+//   SUPABASE_URL       = "Project URL"
+//   SUPABASE_ANON_KEY  = "anon" / "public" key (BUKAN service_role key)
+const SUPABASE_URL = 'https://bwijginbudwtgeiewcnh.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ3aWpnaW5idWR3dGdlaWV3Y25oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5MTg1MTksImV4cCI6MjA5NjQ5NDUxOX0.1gUBjSzCAmRrfnZrEQbdP10EttMuQ71m2ryswjxRONo';
+
+let supabaseClient = null;
+let supabaseConfigured = false;
+let authMode = 'login'; // 'login' | 'register'
+let supabaseRestoreOffered = false;
+
+function initSupabaseClient(){
+  supabaseConfigured = typeof SUPABASE_URL === 'string' && SUPABASE_URL.indexOf('http') === 0 &&
+    typeof SUPABASE_ANON_KEY === 'string' && SUPABASE_ANON_KEY.length > 20 &&
+    SUPABASE_URL.indexOf('GANTI') === -1 && SUPABASE_ANON_KEY.indexOf('GANTI') === -1;
+  if(supabaseConfigured && window.supabase && window.supabase.createClient){
+    try{
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }catch(e){
+      console.error('Gagal membuat Supabase client:', e);
+      supabaseConfigured = false;
+    }
+  }
+}
+
+function setAuthMode(mode){
+  authMode = mode;
+  $('#auth-error').hidden = true;
+  $('#auth-info').hidden = true;
+  const confirmWrap = $('#auth-password-confirm-wrap');
+  if(mode === 'register'){
+    $('#auth-form-title').textContent = 'Daftar Akun Baru';
+    $('#auth-form-sub').textContent = 'Buat akun dengan email untuk mulai mencatat';
+    confirmWrap.hidden = false;
+    $('#auth-submit-label').textContent = 'Daftar';
+    $('#auth-toggle-mode').innerHTML = 'Sudah punya akun? <span>Masuk di sini</span>';
+  }else{
+    $('#auth-form-title').textContent = 'Masuk ke Akun';
+    $('#auth-form-sub').textContent = 'Masukkan email dan kata sandi kamu';
+    confirmWrap.hidden = true;
+    $('#auth-submit-label').textContent = 'Masuk';
+    $('#auth-toggle-mode').innerHTML = 'Belum punya akun? <span>Daftar di sini</span>';
+  }
+}
+function showAuthError(msg){ const el=$('#auth-error'); el.textContent=msg; el.hidden=false; $('#auth-info').hidden=true; }
+function showAuthInfo(msg){ const el=$('#auth-info'); el.textContent=msg; el.hidden=false; $('#auth-error').hidden=true; }
+
+function resetAuthForm(){
+  $('#auth-form').reset();
+  $('#auth-error').hidden = true;
+  $('#auth-info').hidden = true;
+  setAuthMode('login');
+}
+
+function hideAuthScreenAndStart(user){
+  currentUser = user;
+  document.body.classList.add('authed');
+  initApp();
+}
+
+async function handleAuthSubmit(e){
+  e.preventDefault();
+  if(!supabaseConfigured) return;
+  const email = $('#auth-email').value.trim();
+  const password = $('#auth-password').value;
+  if(!email || !password){ showAuthError('Email dan kata sandi wajib diisi'); return; }
+  if(password.length < 6){ showAuthError('Kata sandi minimal 6 karakter'); return; }
+  if(authMode === 'register' && password !== $('#auth-password-confirm').value){
+    showAuthError('Konfirmasi kata sandi tidak sama'); return;
+  }
+
+  const btn = $('#auth-submit-btn');
+  btn.disabled = true;
+  $('#auth-submit-label').textContent = 'Memproses…';
+
+  try{
+    if(authMode === 'register'){
+      const { data, error } = await supabaseClient.auth.signUp({ email, password });
+      if(error){ showAuthError(error.message); return; }
+      if(data.session){ hideAuthScreenAndStart(data.user); return; }
+      showAuthInfo('Akun berhasil dibuat. Cek email kamu untuk konfirmasi, lalu masuk kembali di sini.');
+      setAuthMode('login');
+      $('#auth-email').value = email;
+    }else{
+      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if(error){ showAuthError(error.message); return; }
+      hideAuthScreenAndStart(data.user);
+    }
+  }catch(err){
+    showAuthError('Terjadi kesalahan: ' + (err && err.message ? err.message : String(err)));
+  }finally{
+    btn.disabled = false;
+    if(!document.body.classList.contains('authed')){
+      $('#auth-submit-label').textContent = authMode === 'register' ? 'Daftar' : 'Masuk';
+    }
+  }
+}
+
+async function logoutPrompt(){
+  const ok = await swalConfirmInfo('Keluar dari Akun?', 'Data lokal di perangkat ini tetap tersimpan dan akan muncul lagi saat kamu masuk dengan akun yang sama.');
+  if(!ok) return;
+  if(supabaseClient){
+    try{ await supabaseClient.auth.signOut(); }catch(e){ console.error('Gagal keluar dari Supabase:', e); }
+  }
+  currentUser = null;
+  DB = null;
+  document.body.classList.remove('authed');
+  resetAuthForm();
+}
+
+async function checkAuthAndStart(){
+  initSupabaseClient();
+  if(!supabaseConfigured){
+    $('#auth-not-configured').hidden = false;
+    $('#auth-form').hidden = true;
+    return;
+  }
+  $('#auth-form').addEventListener('submit', handleAuthSubmit);
+  $('#auth-toggle-mode').addEventListener('click', ()=> setAuthMode(authMode==='login'?'register':'login'));
+
+  try{
+    const { data, error } = await supabaseClient.auth.getSession();
+    if(error) throw error;
+    if(data.session && data.session.user) hideAuthScreenAndStart(data.session.user);
+  }catch(e){
+    console.error('Gagal memeriksa sesi Supabase:', e);
+  }
+
+  supabaseClient.auth.onAuthStateChange((event)=>{
+    if(event === 'SIGNED_OUT'){
+      currentUser = null;
+      document.body.classList.remove('authed');
+    }
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* 14. SUPABASE: pemulihan data lama (transaksi, hutang/piutang, kategori)  */
+/* ---------------------------------------------------------------------- */
+// Tabel donasi & chat sengaja diabaikan (tidak dipakai aplikasi ini).
+// Konversi nilai 'jenis'/'status' di bawah ini adalah TEBAKAN TERBAIK
+// berdasarkan nama kolom yang terlihat -- sesuaikan bila hasil pulihan
+// datanya terbalik (pendapatan/pengeluaran atau hutang/piutang tertukar).
+function guessTxType(jenis){
+  const j = String(jenis||'').toLowerCase().trim();
+  if(['pendapatan','masuk','income','pemasukan'].includes(j)) return 'income';
+  if(['pengeluaran','keluar','expense'].includes(j)) return 'expense';
+  return 'expense';
+}
+function guessDebtKind(jenis){
+  const j = String(jenis||'').toLowerCase().trim();
+  return ['piutang','receivable'].includes(j) ? 'receivable' : 'debt';
+}
+function guessDebtStatus(status, sisa, nominal){
+  const s = String(status||'').toLowerCase().trim();
+  if(['lunas','paid','selesai','completed','done'].includes(s)) return 'lunas';
+  if(['cicil','partial','sebagian','installment'].includes(s)) return 'cicil';
+  const rem = Number(sisa), tot = Number(nominal);
+  if(!isNaN(rem) && rem <= 0) return 'lunas';
+  if(!isNaN(rem) && !isNaN(tot) && tot > 0 && rem < tot) return 'cicil';
+  return 'belum';
+}
+function findOrCreateWalletByName(name){
+  name = (name==null?'':String(name)).trim() || 'Dompet Utama';
+  let w = DB.wallets.find(x=>x.name.toLowerCase()===name.toLowerCase());
+  if(!w){ w = { id: uid('w'), name, balance: 0, deletable: true }; DB.wallets.push(w); }
+  return w;
+}
+
+async function maybeOfferSupabaseRestore(){
+  if(!supabaseClient || !currentUser || supabaseRestoreOffered) return;
+  supabaseRestoreOffered = true;
+  try{
+    const { count, error } = await supabaseClient.from('transaksi').select('id', { count:'exact', head:true }).eq('user_id', currentUser.id);
+    if(error){ console.error('Cek data Supabase gagal:', error); return; }
+    if(count && count > 0){
+      const ok = await swalConfirmInfo('Data Ditemukan di Supabase', `Ditemukan ${count} transaksi tersimpan di akun Supabase kamu. Pulihkan ke aplikasi ini sekarang?`);
+      if(ok) restoreFromSupabaseData();
+    }
+  }catch(e){
+    console.error('Gagal memeriksa data Supabase:', e);
+  }
+}
+
+async function restoreFromSupabaseData(){
+  if(!supabaseClient || !currentUser){ notify('Belum terhubung ke Supabase', 'error'); return; }
+  const authUid = currentUser.id;
+
+  swalFire({
+    title: 'Mengambil data…', html: 'Mohon tunggu sebentar.',
+    allowOutsideClick: false, showConfirmButton: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  const [txRes, hutangRes, pengaturanRes] = await Promise.all([
+    supabaseClient.from('transaksi').select('*').eq('user_id', authUid),
+    supabaseClient.from('hutang').select('*').eq('user_id', authUid),
+    supabaseClient.from('pengaturan').select('*').eq('user_id', authUid).maybeSingle()
+  ]);
+  Swal.close();
+
+  if(txRes.error || hutangRes.error){
+    const msg = (txRes.error && txRes.error.message) || (hutangRes.error && hutangRes.error.message) || 'kesalahan tidak diketahui';
+    notify('Gagal mengambil data dari Supabase: ' + msg, 'error');
+    return;
+  }
+
+  const txRows = txRes.data || [];
+  const hutangRows = hutangRes.data || [];
+  const pengaturanRow = pengaturanRes.data || null;
+
+  if(!txRows.length && !hutangRows.length && !pengaturanRow){
+    notify('Tidak ada data ditemukan di Supabase untuk akun ini', 'error');
+    return;
+  }
+
+  const ok = await swalConfirmDanger(
+    'Pulihkan Data dari Supabase?',
+    `Ditemukan ${txRows.length} transaksi dan ${hutangRows.length} data hutang/piutang. Data ini akan DITAMBAHKAN ke data lokal saat ini (data lokal yang sudah ada tidak dihapus/ditimpa). Lanjutkan?`
+  );
+  if(!ok) return;
+
+  let importedTx = 0, importedDebt = 0;
+
+  txRows.forEach(row=>{
+    const localId = 'sb-tx-' + row.id;
+    if(DB.transactions.find(t=>t.id===localId)) return;
+    const wallet = findOrCreateWalletByName(row.dompet);
+    const type = guessTxType(row.jenis);
+    const amount = Number(row.jumlah) || 0;
+    const tx = {
+      id: localId, walletId: wallet.id, type,
+      date: row.tanggal || localDateStr(), time: row.jam || '00:00',
+      description: row.kategori || '(tanpa keterangan)', amount,
+      source: 'manual', relatedId: null,
+      createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now()
+    };
+    DB.transactions.push(tx);
+    applyBalanceDelta(wallet.id, type==='income' ? amount : -amount);
+    if(tx.description && !DB.descriptions[type].includes(tx.description)) DB.descriptions[type].unshift(tx.description);
+    importedTx++;
+  });
+
+  hutangRows.forEach(row=>{
+    const localId = 'sb-debt-' + row.id;
+    const kind = guessDebtKind(row.jenis);
+    const cfg = KIND_CONFIG[kind];
+    if(DB[cfg.store].find(r=>r.id===localId)) return;
+    const nominal = Number(row.nominal) || 0;
+    const sisa = row.sisa != null ? Number(row.sisa) : Math.max(0, nominal - (Number(row.terbayar)||0));
+    const record = {
+      id: localId, name: row.nama || '(tanpa nama)',
+      amount: nominal, remaining: Math.max(0, sisa),
+      date: row.tanggal || localDateStr(), time: '00:00',
+      walletId: DB.wallets[0].id,
+      status: guessDebtStatus(row.status, sisa, nominal),
+      payments: [], transactionId: null, imported: true
+    };
+    DB[cfg.store].push(record);
+    importedDebt++;
+  });
+
+  if(pengaturanRow){
+    (pengaturanRow.kategori_masuk||[]).forEach(k=>{ if(k && !DB.descriptions.income.includes(k)) DB.descriptions.income.unshift(k); });
+    (pengaturanRow.kategori_keluar||[]).forEach(k=>{ if(k && !DB.descriptions.expense.includes(k)) DB.descriptions.expense.unshift(k); });
+  }
+
+  saveDB();
+  renderAll();
+  notify(`Berhasil memulihkan ${importedTx} transaksi & ${importedDebt} hutang/piutang dari Supabase`);
+}
+
+document.addEventListener('DOMContentLoaded', checkAuthAndStart);
