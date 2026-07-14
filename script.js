@@ -1311,153 +1311,195 @@ function renderChart(){
 /* ---------------------------------------------------------------------- */
 let invoiceRange = todayRange();
 
-/** Karakter di luar Basic Multilingual Plane (mis. emoji seperti 🏦, 🔁) tidak
-    didukung oleh font standar jsPDF (Helvetica) dan membuat SELURUH teks pada
-    baris tersebut tercetak rusak/berspasi acak. Fungsi ini membersihkan teks
-    sebelum dikirim ke jsPDF, supaya nama dompet/keterangan yang mengandung
-    emoji (mis. hasil ketik dari keyboard Android) tetap tercetak rapi. */
-function pdfSafeText(str){
-  str = String(str == null ? '' : str);
-  str = str.replace(/[\u{10000}-\u{10FFFF}]/gu, '');            // emoji astral (🏦 🔁 😀 dst.)
-  str = str.replace(/[\u2190-\u21FF\u2300-\u27BF\uFE0F\u200D]/g, ''); // simbol/emoji di BMP (☕ ✂ ➜ dst.)
-  return str.replace(/\s{2,}/g, ' ').trim();
-}
-
 function groupSum(txs){
   const map = {};
   txs.forEach(t=>{ map[t.description] = (map[t.description] || 0) + t.amount; });
   return map;
 }
 
-/** Transaksi dijumlahkan per nama keterangan, diurutkan dari nominal terbesar
-    ke terkecil (tanggal/waktu individual tidak relevan di sini karena rentang
-    tanggal laporan sudah tertera di kop cetak). */
 function computeInvoiceData(){
   const txs = DB.transactions.filter(t=>t.date>=invoiceRange.from && t.date<=invoiceRange.to);
   const incomeMap = groupSum(txs.filter(t=>t.type==='income'));
   const expenseMap = groupSum(txs.filter(t=>t.type==='expense'));
-  const incomeEntries = Object.entries(incomeMap).sort((a,b)=>b[1]-a[1]);
-  const expenseEntries = Object.entries(expenseMap).sort((a,b)=>b[1]-a[1]);
-  const incomeTotal = incomeEntries.reduce((a,[,v])=>a+v,0);
-  const expenseTotal = expenseEntries.reduce((a,[,v])=>a+v,0);
-  return { incomeEntries, expenseEntries, incomeTotal, expenseTotal, net: incomeTotal - expenseTotal };
+  const incomeTotal = Object.values(incomeMap).reduce((a,b)=>a+b,0);
+  const expenseTotal = Object.values(expenseMap).reduce((a,b)=>a+b,0);
+  return { incomeMap, expenseMap, incomeTotal, expenseTotal, net: incomeTotal - expenseTotal };
 }
 
 function renderInvoicePreview(){
   $('#invoice-range').textContent = formatRangeLabel(invoiceRange);
   const data = computeInvoiceData();
   const container = $('#invoice-preview');
+  const incomeEntries = Object.entries(data.incomeMap);
+  const expenseEntries = Object.entries(data.expenseMap);
 
-  if(!data.incomeEntries.length && !data.expenseEntries.length){
+  if(!incomeEntries.length && !expenseEntries.length){
     container.innerHTML = emptyStateHtml('Belum ada data', 'Tidak ada transaksi pada rentang tanggal ini');
     return;
   }
 
-  const incomeRows = data.incomeEntries.map(([k,v])=>`
+  const incomeRows = incomeEntries.map(([k,v])=>`
     <div class="invoice-row"><span class="invoice-row__name">${escapeHtml(k)}</span><span class="invoice-row__value" style="color:var(--c-emerald-light)">${formatRupiah(v)}</span></div>`).join('');
-  const expenseRows = data.expenseEntries.map(([k,v])=>`
+  const expenseRows = expenseEntries.map(([k,v])=>`
     <div class="invoice-row"><span class="invoice-row__name">${escapeHtml(k)}</span><span class="invoice-row__value" style="color:var(--c-coral)">${formatRupiah(v)}</span></div>`).join('');
 
   container.innerHTML = `
     <div class="invoice-preview__brand">Buku Kas Aul Gen2.5</div>
     <div class="invoice-preview__meta">Laporan ${formatDateID(invoiceRange.from)} – ${formatDateID(invoiceRange.to)}</div>
-    ${incomeRows ? `<div class="list-heading" style="margin-top:2px;">Pendapatan</div>${incomeRows}` : ''}
-    ${expenseRows ? `<div class="list-heading" style="margin-top:14px;">Pengeluaran</div>${expenseRows}` : ''}
-    <div class="invoice-row" style="margin-top:14px;"><span class="invoice-row__name">Total Pendapatan</span><span class="invoice-row__value" style="color:var(--c-emerald-light)">${formatRupiah(data.incomeTotal)}</span></div>
-    <div class="invoice-row"><span class="invoice-row__name">Total Pengeluaran</span><span class="invoice-row__value" style="color:var(--c-coral)">${formatRupiah(data.expenseTotal)}</span></div>
+    ${incomeRows ? `<div class="list-heading" style="margin-top:2px;">Pendapatan</div>${incomeRows}
+      <div class="invoice-subtotal"><span>Total Pendapatan</span><span style="color:var(--c-emerald-light)">${formatRupiah(data.incomeTotal)}</span></div>` : ''}
+    ${expenseRows ? `<div class="list-heading" style="margin-top:14px;">Pengeluaran</div>${expenseRows}
+      <div class="invoice-subtotal"><span>Total Pengeluaran</span><span style="color:var(--c-coral)">${formatRupiah(data.expenseTotal)}</span></div>` : ''}
     <div class="invoice-total"><span>Saldo Bersih</span><span style="color:${data.net>=0?'var(--c-emerald-light)':'var(--c-coral)'}">${formatRupiah(data.net)}</span></div>
   `;
 }
 
-function generateInvoicePdf(){
-  const data = computeInvoiceData();
+/* Logo aplikasi (loogo-512.png) di-cache sebagai data URL sekali saja,
+   supaya tidak perlu memuat ulang gambar setiap kali PDF dibuat. */
+let _invoiceLogoCache = null;
+function loadInvoiceLogoDataUrl(){
+  if(_invoiceLogoCache !== null) return Promise.resolve(_invoiceLogoCache);
+  return new Promise((resolve)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try{
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || 512;
+        canvas.height = img.naturalHeight || 512;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        _invoiceLogoCache = canvas.toDataURL('image/png');
+      }catch(e){ _invoiceLogoCache = false; }
+      resolve(_invoiceLogoCache);
+    };
+    img.onerror = () => { _invoiceLogoCache = false; resolve(false); };
+    img.src = 'loogo-512.png';
+  });
+}
 
-  if(!data.incomeEntries.length && !data.expenseEntries.length){
-    notify('Tidak ada transaksi pada rentang tanggal ini', 'error');
-    return;
-  }
+async function generateInvoicePdf(){
+  const data = computeInvoiceData();
+  const incomeEntries = Object.entries(data.incomeMap);
+  const expenseEntries = Object.entries(data.expenseMap);
+  const logo = await loadInvoiceLogoDataUrl();
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  const marginX = 40;
-  const pageRight = 555;
-  const pageBottom = 800;
-  let y = 56;
+  const rp = (n) => 'Rp ' + Math.round(n).toLocaleString('id-ID');
 
-  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(11,79,69);
-  doc.text('Buku Kas Aul Gen2.5', marginX, y);
-  y += 20;
-  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(90,100,110);
-  doc.text('Laporan Keuangan Pribadi', marginX, y); y += 14;
-  doc.text(`Periode: ${formatDateID(invoiceRange.from)} - ${formatDateID(invoiceRange.to)}`, marginX, y); y += 10;
-  doc.setDrawColor(220,224,228); doc.line(marginX, y+8, pageRight, y+8); y += 26;
+  const PAGE_W = doc.internal.pageSize.getWidth();
+  const PAGE_H = doc.internal.pageSize.getHeight();
+  const MARGIN = 40;
+  const RIGHT = PAGE_W - MARGIN;
+  const HEADER_H = 96;
+  const FOOTER_H = 46;
 
-  const baseTableOpts = {
-    theme: 'grid',
-    styles: { font: 'helvetica', lineColor: [225,229,232], lineWidth: 0.5, fontSize: 10, cellPadding: 7 },
-    columnStyles: { 1: { halign: 'right', fontStyle: 'bold', cellWidth: 110 } },
-    margin: { left: marginX, right: 40, top: 50, bottom: 50 }
-  };
+  const EMERALD = [11,79,69], EMERALD_LIGHT = [18,120,106], EMERALD_SOFT = [228,241,236];
+  const CORAL = [214,97,79], CORAL_SOFT = [251,234,231];
+  const INK = [27,36,48], MUTED = [130,140,148], LINE = [226,230,233];
 
-  if(data.incomeEntries.length){
-    doc.autoTable(Object.assign({}, baseTableOpts, {
+  let y = HEADER_H + 28;
+
+  /* -------- Rincian Pendapatan -------- */
+  if(incomeEntries.length){
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...EMERALD);
+    doc.text('Rincian Pendapatan', MARGIN, y);
+    y += 10;
+    doc.autoTable({
       startY: y,
-      head: [['Keterangan (Pendapatan)','Nominal']],
-      body: data.incomeEntries.map(([k,v])=>[pdfSafeText(k), formatRupiah(v)]),
-      headStyles: { fillColor: [11,79,69], textColor: [255,255,255], fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [237,246,242] },
-      bodyStyles: { textColor: [11,79,69] }
-    }));
-    y = doc.lastAutoTable.finalY + 20;
+      head: [['Keterangan', 'Nominal']],
+      body: incomeEntries.map(([k,v])=>[k, rp(v)]),
+      foot: [['Total Pendapatan', rp(data.incomeTotal)]],
+      theme: 'grid',
+      styles: { font: 'helvetica', fontSize: 9.5, cellPadding: 7, textColor: INK, lineColor: LINE, lineWidth: 0.6 },
+      headStyles: { fillColor: EMERALD_SOFT, textColor: EMERALD, fontStyle: 'bold', lineColor: LINE },
+      footStyles: { fillColor: [255,255,255], textColor: EMERALD, fontStyle: 'bold', fontSize: 10, lineColor: EMERALD, lineWidth: 0.8 },
+      alternateRowStyles: { fillColor: [249,250,249] },
+      columnStyles: { 1: { halign: 'right', cellWidth: 140 } },
+      margin: { left: MARGIN, right: MARGIN, top: HEADER_H + 16, bottom: FOOTER_H + 20 }
+    });
+    y = doc.lastAutoTable.finalY + 26;
   }
 
-  if(data.expenseEntries.length){
-    if(y > pageBottom - 100){ doc.addPage(); y = 56; }
-    doc.autoTable(Object.assign({}, baseTableOpts, {
+  /* -------- Rincian Pengeluaran -------- */
+  if(expenseEntries.length){
+    if(y > PAGE_H - FOOTER_H - 90){ doc.addPage(); y = HEADER_H + 28; }
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...CORAL);
+    doc.text('Rincian Pengeluaran', MARGIN, y);
+    y += 10;
+    doc.autoTable({
       startY: y,
-      head: [['Keterangan (Pengeluaran)','Nominal']],
-      body: data.expenseEntries.map(([k,v])=>[pdfSafeText(k), formatRupiah(v)]),
-      headStyles: { fillColor: [214,97,79], textColor: [255,255,255], fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [253,240,238] },
-      bodyStyles: { textColor: [214,97,79] }
-    }));
-    y = doc.lastAutoTable.finalY + 24;
+      head: [['Keterangan', 'Nominal']],
+      body: expenseEntries.map(([k,v])=>[k, rp(v)]),
+      foot: [['Total Pengeluaran', rp(data.expenseTotal)]],
+      theme: 'grid',
+      styles: { font: 'helvetica', fontSize: 9.5, cellPadding: 7, textColor: INK, lineColor: LINE, lineWidth: 0.6 },
+      headStyles: { fillColor: CORAL_SOFT, textColor: CORAL, fontStyle: 'bold', lineColor: LINE },
+      footStyles: { fillColor: [255,255,255], textColor: CORAL, fontStyle: 'bold', fontSize: 10, lineColor: CORAL, lineWidth: 0.8 },
+      alternateRowStyles: { fillColor: [249,250,249] },
+      columnStyles: { 1: { halign: 'right', cellWidth: 140 } },
+      margin: { left: MARGIN, right: MARGIN, top: HEADER_H + 16, bottom: FOOTER_H + 20 }
+    });
+    y = doc.lastAutoTable.finalY + 26;
   }
 
-  if(y > pageBottom - 110){ doc.addPage(); y = 56; }
+  if(!incomeEntries.length && !expenseEntries.length){
+    doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...MUTED);
+    doc.text('Tidak ada transaksi pada rentang tanggal ini.', MARGIN, y);
+    y += 30;
+  }
 
-  // ---------- Kesimpulan akhir: Total Pendapatan, Total Pengeluaran, Saldo Bersih ----------
-  doc.setDrawColor(220,224,228); doc.line(marginX, y, pageRight, y); y += 22;
+  /* -------- Kotak ringkasan saldo -------- */
+  const boxH = 92;
+  if(y > PAGE_H - FOOTER_H - boxH - 10){ doc.addPage(); y = HEADER_H + 28; }
+  const boxW = RIGHT - MARGIN;
+  doc.setFillColor(247,248,248);
+  doc.setDrawColor(...LINE); doc.setLineWidth(0.6);
+  doc.roundedRect(MARGIN, y, boxW, boxH, 8, 8, 'FD');
 
-  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(90,100,110);
-  doc.text('Total Pendapatan', marginX, y);
-  doc.setFont('helvetica','bold'); doc.setTextColor(11,79,69);
-  doc.text(formatRupiah(data.incomeTotal), pageRight, y, { align: 'right' });
-  y += 18;
+  const padX = 18;
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...INK);
+  doc.text('Total Pendapatan', MARGIN + padX, y + 24);
+  doc.setFont('helvetica','bold'); doc.setTextColor(...EMERALD_LIGHT);
+  doc.text(rp(data.incomeTotal), RIGHT - padX, y + 24, { align: 'right' });
 
-  doc.setFont('helvetica','normal'); doc.setTextColor(90,100,110);
-  doc.text('Total Pengeluaran', marginX, y);
-  doc.setFont('helvetica','bold'); doc.setTextColor(214,97,79);
-  doc.text(formatRupiah(data.expenseTotal), pageRight, y, { align: 'right' });
-  y += 24;
+  doc.setFont('helvetica','normal'); doc.setTextColor(...INK);
+  doc.text('Total Pengeluaran', MARGIN + padX, y + 44);
+  doc.setFont('helvetica','bold'); doc.setTextColor(...CORAL);
+  doc.text(rp(data.expenseTotal), RIGHT - padX, y + 44, { align: 'right' });
 
-  doc.setDrawColor(220,224,228); doc.line(marginX, y, pageRight, y); y += 22;
+  doc.setDrawColor(...LINE); doc.line(MARGIN + padX, y + 56, RIGHT - padX, y + 56);
 
-  const col = data.net >= 0 ? [11,79,69] : [214,97,79];
-  doc.setFont('helvetica','bold'); doc.setFontSize(13);
-  doc.setTextColor(col[0], col[1], col[2]);
-  doc.text('Saldo Bersih', marginX, y);
-  doc.text(formatRupiah(data.net), pageRight, y, { align: 'right' });
+  const netColor = data.net >= 0 ? EMERALD : CORAL;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12.5); doc.setTextColor(...INK);
+  doc.text('Saldo Bersih', MARGIN + padX, y + 78);
+  doc.setTextColor(...netColor);
+  doc.text(rp(data.net), RIGHT - padX, y + 78, { align: 'right' });
 
-  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(160,160,160);
-  doc.text(`Dicetak pada ${formatDateLong(localDateStr())} ${localTimeStr()}`, marginX, pageBottom);
+  /* -------- Header (logo) & footer di setiap halaman -------- */
+  const totalPages = doc.internal.getNumberOfPages();
+  for(let i = 1; i <= totalPages; i++){
+    doc.setPage(i);
 
-  // Nomor halaman (ditulis di akhir supaya total halaman sudah pasti/akurat)
-  const pageCount = doc.internal.getNumberOfPages();
-  for(let p = 1; p <= pageCount; p++){
-    doc.setPage(p);
-    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(160,160,160);
-    doc.text(`Halaman ${p} / ${pageCount}`, pageRight, pageBottom, { align: 'right' });
+    doc.setFillColor(...EMERALD);
+    doc.rect(0, 0, PAGE_W, HEADER_H, 'F');
+    let textX = MARGIN;
+    if(logo){
+      try{ doc.addImage(logo, 'PNG', MARGIN, HEADER_H/2 - 22, 44, 44); textX = MARGIN + 58; }catch(e){}
+    }
+    doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(255,255,255);
+    doc.text('Buku Kas Aul Gen2.5', textX, 42);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(210,228,224);
+    doc.text('Laporan Keuangan Pribadi', textX, 58);
+    doc.setFontSize(9); doc.setTextColor(180,206,200);
+    doc.text(`Periode ${formatDateID(invoiceRange.from)} \u2013 ${formatDateID(invoiceRange.to)}`, textX, 72);
+
+    const fy = PAGE_H - FOOTER_H + 16;
+    doc.setDrawColor(...LINE); doc.setLineWidth(0.6);
+    doc.line(MARGIN, fy - 12, RIGHT, fy - 12);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...MUTED);
+    doc.text(`Dicetak pada ${formatDateLong(localDateStr())} ${localTimeStr()}`, MARGIN, fy);
+    doc.text(`Halaman ${i}/${totalPages}`, RIGHT, fy, { align: 'right' });
   }
 
   const fname = `Laporan-BukuKasAul-${invoiceRange.from}_${invoiceRange.to}.pdf`;
