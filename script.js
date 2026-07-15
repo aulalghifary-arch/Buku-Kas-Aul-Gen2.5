@@ -39,6 +39,8 @@ const ICONS = {
   upload: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V8.5M7 13l5-5 5 5M4.5 19.5h15"/></svg>',
   swap: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 4 4-4 4M6 7h11a3 3 0 0 1 3 3v1M18 21l-4-4 4-4M18 17H7a3 3 0 0 1-3-3v-1"/></svg>',
   warning: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4.5M12 17h.01M10.4 3.6 2.9 17a1.7 1.7 0 0 0 1.5 2.5h15.2a1.7 1.7 0 0 0 1.5-2.5L13.6 3.6a1.7 1.7 0 0 0-3.2 0Z"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.7 10.7 0 0 1 12 5c6 0 9.5 7 9.5 7a15.8 15.8 0 0 1-3.1 4.1M6.6 6.6C4 8.3 2.5 12 2.5 12S6 19 12 19a9.9 9.9 0 0 0 4.2-.9"/><path d="M9.9 10a3 3 0 0 0 4.2 4.2"/></svg>',
   empty: '<svg viewBox="0 0 24 24" width="46" height="46" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="6.5" width="17" height="13" rx="2.5"/><path d="M3.5 10.5h17M7 3.5h10"/></svg>'
 };
 
@@ -2014,17 +2016,14 @@ function setAuthMode(mode){
   authMode = mode;
   $('#auth-error').hidden = true;
   $('#auth-info').hidden = true;
-  const confirmWrap = $('#auth-password-confirm-wrap');
   if(mode === 'register'){
     $('#auth-form-title').textContent = 'Daftar Akun Baru';
     $('#auth-form-sub').textContent = 'Buat akun dengan email untuk mulai mencatat';
-    confirmWrap.hidden = false;
     $('#auth-submit-label').textContent = 'Daftar';
     $('#auth-toggle-mode').innerHTML = 'Sudah punya akun? <span>Masuk di sini</span>';
   }else{
     $('#auth-form-title').textContent = 'Masuk ke Akun';
     $('#auth-form-sub').textContent = 'Masukkan email dan kata sandi kamu';
-    confirmWrap.hidden = true;
     $('#auth-submit-label').textContent = 'Masuk';
     $('#auth-toggle-mode').innerHTML = 'Belum punya akun? <span>Daftar di sini</span>';
   }
@@ -2052,9 +2051,6 @@ async function handleAuthSubmit(e){
   const password = $('#auth-password').value;
   if(!email || !password){ showAuthError('Email dan kata sandi wajib diisi'); return; }
   if(password.length < 6){ showAuthError('Kata sandi minimal 6 karakter'); return; }
-  if(authMode === 'register' && password !== $('#auth-password-confirm').value){
-    showAuthError('Konfirmasi kata sandi tidak sama'); return;
-  }
 
   const btn = $('#auth-submit-btn');
   btn.disabled = true;
@@ -2095,7 +2091,21 @@ async function logoutPrompt(){
   resetAuthForm();
 }
 
+function initPasswordToggle(){
+  const btn = $('#auth-password-toggle');
+  const input = $('#auth-password');
+  if(!btn || !input) return;
+  btn.innerHTML = ICONS.eye;
+  btn.addEventListener('click', ()=>{
+    const willShow = input.type === 'password';
+    input.type = willShow ? 'text' : 'password';
+    btn.innerHTML = willShow ? ICONS.eyeOff : ICONS.eye;
+    btn.setAttribute('aria-label', willShow ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi');
+  });
+}
+
 async function checkAuthAndStart(){
+  initPasswordToggle();
   initSupabaseClient();
   if(!supabaseConfigured){
     $('#auth-not-configured').hidden = false;
