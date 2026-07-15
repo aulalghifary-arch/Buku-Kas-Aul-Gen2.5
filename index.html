@@ -52,11 +52,10 @@
       </label>
       <label class="text-field">
         <span class="text-field__label">Kata Sandi</span>
-        <input type="password" id="auth-password" placeholder="Minimal 6 karakter" autocomplete="current-password" required minlength="6">
-      </label>
-      <label class="text-field" id="auth-password-confirm-wrap" hidden>
-        <span class="text-field__label">Ulangi Kata Sandi</span>
-        <input type="password" id="auth-password-confirm" placeholder="Ulangi kata sandi" autocomplete="new-password">
+        <span class="text-field__password">
+          <input type="password" id="auth-password" placeholder="Minimal 6 karakter" autocomplete="current-password" required minlength="6">
+          <button type="button" class="text-field__toggle-pass" id="auth-password-toggle" aria-label="Tampilkan kata sandi"></button>
+        </span>
       </label>
 
       <p class="auth-form__error" id="auth-error" hidden></p>
