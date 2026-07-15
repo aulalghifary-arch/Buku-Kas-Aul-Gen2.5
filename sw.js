@@ -1,4 +1,4 @@
-const CACHE_NAME = 'buku-kas-aul-v3';
+const CACHE_NAME = 'buku-kas-aul-v2';
 // Daftarkan semua file utama Anda di sini agar bisa diakses offline
 const ASSETS_TO_CACHE = [
   './',
