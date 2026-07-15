@@ -386,6 +386,15 @@ body.dark .summary-chip{ background: var(--bg-surface); }
   width: 100%; background: var(--bg-surface-2); border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm); padding: 12px 13px; font-size: 14px; font-weight: 500;
 }
+.text-field__password{ position: relative; display: block; }
+.text-field__password input{ padding-right: 44px; }
+.text-field__toggle-pass{
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  width: 34px; height: 34px; display: grid; place-items: center;
+  color: var(--text-muted); border-radius: var(--radius-pill);
+}
+.text-field__toggle-pass:hover{ color: var(--text-secondary); background: var(--bg-sunken); }
+.text-field__toggle-pass:active{ transform: translateY(-50%) scale(.92); }
 
 /* ---------------------------------- BUTTONS ---------------------------------- */
 .btn-primary{
