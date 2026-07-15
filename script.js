@@ -21,6 +21,7 @@
 const ICONS = {
   calendar: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9.5h17M8 3v3M16 3v3" stroke-linecap="round"/></svg>',
   cloud: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18.5a4.5 4.5 0 0 1-.5-8.97 5.5 5.5 0 0 1 10.7-1.9A4.5 4.5 0 0 1 17 18.5H7Z"/><path d="M12 11v6.5M9.5 15l2.5-2.5 2.5 2.5"/></svg>',
+  cloudDown: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18.5a4.5 4.5 0 0 1-.5-8.97 5.5 5.5 0 0 1 10.7-1.9A4.5 4.5 0 0 1 17 18.5H7Z"/><path d="M12 17.5V11M9.5 13.5l2.5 2.5 2.5-2.5"/></svg>',
   logout: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5H6a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 6 19.5h3"/><path d="M16 15.5 20.5 11 16 6.5"/><path d="M20.5 11h-11"/></svg>',
   arrowUp: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
   arrowDown: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>',
@@ -1528,7 +1529,8 @@ async function openOptionsMenu(){
         <div class="swal-list__divider"></div>
         <button type="button" class="swal-list__item" id="opt-backup">${ICONS.download}<span>Backup Data</span></button>
         <button type="button" class="swal-list__item" id="opt-restore">${ICONS.upload}<span>Pulihkan Data</span></button>
-        <button type="button" class="swal-list__item" id="opt-restore-cloud">${ICONS.cloud}<span>Pulihkan dari Supabase</span></button>
+        <button type="button" class="swal-list__item" id="opt-backup-cloud">${ICONS.cloud}<span>Cadangkan Cloud</span></button>
+        <button type="button" class="swal-list__item" id="opt-restore-cloud">${ICONS.cloudDown}<span>Pulihkan Cloud</span></button>
         <button type="button" class="swal-list__item" id="opt-transfer">${ICONS.swap}<span>Transfer Antar Dompet</span></button>
         <div class="swal-list__divider"></div>
         <button type="button" class="swal-list__item" id="opt-logout">${ICONS.logout}<span>Keluar</span></button>
@@ -1542,7 +1544,8 @@ async function openOptionsMenu(){
       $('#opt-theme', popup).addEventListener('click', ()=>{ Swal.close(); toggleTheme(); });
       $('#opt-backup', popup).addEventListener('click', ()=>{ Swal.close(); backupData(); });
       $('#opt-restore', popup).addEventListener('click', ()=>{ Swal.close(); restoreDataPrompt(); });
-      $('#opt-restore-cloud', popup).addEventListener('click', ()=>{ Swal.close(); restoreFromSupabaseData(); });
+      $('#opt-backup-cloud', popup).addEventListener('click', ()=>{ Swal.close(); backupToCloud(); });
+      $('#opt-restore-cloud', popup).addEventListener('click', ()=>{ Swal.close(); restoreFromCloudBackup(); });
       $('#opt-transfer', popup).addEventListener('click', ()=>{ Swal.close(); openTransferDialog(); });
       $('#opt-logout', popup).addEventListener('click', ()=>{ Swal.close(); logoutPrompt(); });
       $('#opt-reset', popup).addEventListener('click', ()=>{ Swal.close(); resetDataPrompt(); });
@@ -2252,6 +2255,106 @@ async function restoreFromSupabaseData(){
   saveDB();
   renderAll();
   notify(`Berhasil memulihkan ${importedTx} transaksi & ${importedDebt} hutang/piutang dari Supabase`);
+}
+
+/* ---------------------------------------------------------------------- */
+/* 15. SUPABASE: cadangan cloud (backup & pulihkan data aplikasi ini)       */
+/* ---------------------------------------------------------------------- */
+// Tabel khusus untuk cadangan penuh aplikasi ini (BUKAN tabel migrasi lama
+// di atas). Satu baris per akun, berisi seluruh objek DB sebagai JSON —
+// persis seperti file backup lokal (Backup Data), tapi disimpan di Supabase.
+//
+// Buat tabel ini sekali saja lewat Supabase Dashboard -> SQL Editor:
+//
+//   create table if not exists public.bukukas_backup (
+//     user_id uuid primary key references auth.users(id) on delete cascade,
+//     data jsonb not null,
+//     updated_at timestamptz not null default now()
+//   );
+//   alter table public.bukukas_backup enable row level security;
+//   create policy "baca cadangan sendiri" on public.bukukas_backup
+//     for select using (auth.uid() = user_id);
+//   create policy "tulis cadangan sendiri" on public.bukukas_backup
+//     for insert with check (auth.uid() = user_id);
+//   create policy "update cadangan sendiri" on public.bukukas_backup
+//     for update using (auth.uid() = user_id);
+const CLOUD_BACKUP_TABLE = 'bukukas_backup';
+
+async function backupToCloud(){
+  if(!supabaseClient || !currentUser){ notify('Belum masuk ke akun Supabase', 'error'); return; }
+
+  const ok = await swalConfirmInfo(
+    'Cadangkan Data ke Cloud?',
+    'Seluruh data aplikasi ini (dompet, transaksi, hutang/piutang, kategori) akan disalin ke akun Supabase kamu. Cadangan cloud sebelumnya (jika ada) akan digantikan dengan data saat ini.'
+  );
+  if(!ok) return;
+
+  swalFire({
+    title: 'Mencadangkan…', html: 'Mohon tunggu sebentar.',
+    allowOutsideClick: false, showConfirmButton: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  try{
+    const { error } = await supabaseClient.from(CLOUD_BACKUP_TABLE).upsert({
+      user_id: currentUser.id,
+      data: DB,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
+    Swal.close();
+    if(error){ notify('Gagal mencadangkan ke cloud: ' + error.message, 'error'); return; }
+    notify('Data berhasil dicadangkan ke cloud');
+  }catch(e){
+    Swal.close();
+    notify('Gagal mencadangkan ke cloud: ' + (e && e.message ? e.message : String(e)), 'error');
+  }
+}
+
+async function restoreFromCloudBackup(){
+  if(!supabaseClient || !currentUser){ notify('Belum masuk ke akun Supabase', 'error'); return; }
+
+  swalFire({
+    title: 'Mengambil cadangan…', html: 'Mohon tunggu sebentar.',
+    allowOutsideClick: false, showConfirmButton: false,
+    didOpen: () => Swal.showLoading()
+  });
+
+  let row = null, fetchError = null;
+  try{
+    const res = await supabaseClient.from(CLOUD_BACKUP_TABLE).select('data, updated_at').eq('user_id', currentUser.id).maybeSingle();
+    row = res.data; fetchError = res.error;
+  }catch(e){ fetchError = e; }
+  Swal.close();
+
+  if(fetchError){
+    notify('Gagal mengambil cadangan dari cloud: ' + (fetchError.message || String(fetchError)), 'error');
+    return;
+  }
+  if(!row || !row.data){
+    notify('Belum ada cadangan cloud untuk akun ini', 'error');
+    return;
+  }
+
+  const updatedDate = row.updated_at ? new Date(row.updated_at) : null;
+  const waktu = updatedDate ? `${formatDateLong(localDateStr(updatedDate))} ${localTimeStr(updatedDate)}` : 'waktu tidak diketahui';
+  const ok = await swalConfirmDanger(
+    'Pulihkan dari Cadangan Cloud?',
+    `Cadangan terakhir tersimpan pada ${waktu}. Seluruh data di perangkat ini akan DIGANTIKAN dengan data dari cloud. Tindakan ini tidak bisa dibatalkan.`
+  );
+  if(!ok) return;
+
+  try{
+    DB = normalizeDB(row.data);
+    saveDB();
+    document.body.classList.toggle('dark', DB.settings.theme === 'dark');
+    syncStatusBarColor();
+    historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range: todayRange() };
+    chartRange = todayRange(); invoiceRange = todayRange();
+    renderAll();
+    notify('Data berhasil dipulihkan dari cloud');
+  }catch(e){
+    notify('Cadangan cloud tidak valid', 'error');
+  }
 }
 
 document.addEventListener('DOMContentLoaded', checkAuthAndStart);
