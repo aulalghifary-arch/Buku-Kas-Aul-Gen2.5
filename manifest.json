@@ -18,5 +18,63 @@
       "sizes": "512x512",
       "type": "image/png"
     }
+  ],
+  "screenshots": [
+    {
+      "src": "home.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Halaman Beranda"
+    },
+    {
+      "src": "dompet.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Halaman Dompet"
+    },
+    {
+      "src": "grafik.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Halaman Grafik"
+    },
+    {
+      "src": "halaman-hutang.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Halaman Hutang"
+    },
+    {
+      "src": "halaman-piutang.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Halaman Piutang"
+    },
+    {
+      "src": "preview-laporan.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Pratinjau Laporan"
+    },
+    {
+      "src": "riwayat-transaksi.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Riwayat Transaksi"
+    },
+    {
+      "src": "unduhan-laporan.png",
+      "sizes": "1080x2400",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Unduhan Laporan"
+    }
   ]
 }
