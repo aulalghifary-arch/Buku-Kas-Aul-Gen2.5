@@ -574,18 +574,25 @@ function guardPremium(featureTitle, featureText){
   return false;
 }
 
-/** Paywall Premium sesungguhnya, terhubung ke Google Play Billing lewat
-    Digital Goods API (lihat bagian 17 di bawah untuk implementasi lengkap).
-    - Jika aplikasi berjalan di dalam TWA Android & harga produk berhasil
-      diambil dari Play Store -> tampilkan harga asli + tombol "Beli Sekarang"
-      yang memicu prosesPembelian().
-    - Jika BUKAN di TWA (mis. dibuka di browser biasa / iOS) atau harga gagal
-      dimuat -> tampilkan pesan fallback, karena Google Play Billing hanya
-      bisa dipakai di dalam aplikasi Android yang terpasang dari Play Store. */
+/** Paywall Premium sesungguhnya.
+    DIUBAH (migrasi TWA -> native WebView + Kotlin): sebelumnya alur ini
+    murni mengandalkan Digital Goods API (lihat bagian 17), yang HANYA
+    tersedia bila PWA dibuka lewat Chrome dalam bentuk TWA. Sekarang app
+    dibungkus sebagai android.webkit.WebView biasa, jadi Digital Goods API
+    tidak akan pernah ada di konteks ini -- deteksi yang benar sekarang
+    adalah keberadaan jembatan native window.Android.beliPremium() yang
+    disuntikkan oleh MainActivity.kt.
+    - Jika window.Android.beliPremium tersedia (berarti berjalan di dalam
+      app native yang benar) -> tampilkan info paket + tombol "Berlangganan
+      Sekarang" yang memanggil window.Android.beliPremium(). Harga asli akan
+      ditampilkan oleh layar native Google Play saat billing flow dimulai.
+    - Jika TIDAK (dibuka di browser biasa / iOS / desktop) -> tampilkan
+      pesan fallback, karena Google Play Billing hanya bisa dipakai di
+      dalam aplikasi Android yang terpasang dari Play Store. */
 async function openPremiumPaywall(){
-  const product = await getPremiumProductDetails();
+  const isNativeApp = !!(window.Android && typeof window.Android.beliPremium === 'function');
 
-  if(!digitalGoodsService || !product){
+  if(!isNativeApp){
     await swalFire({
       title: 'Berlangganan Premium',
       html: `<p class="swal-theme-html">Pembelian Premium hanya bisa dilakukan lewat aplikasi Android "Buku Kas Aul" yang terpasang dari Play Store. Buka aplikasi tersebut untuk berlangganan.</p>`,
@@ -594,26 +601,54 @@ async function openPremiumPaywall(){
     return;
   }
 
-  const priceText = formatDigitalGoodsPrice(product);
   const res = await swalFire({
     title: 'Berlangganan Premium',
     html: `
       <div class="premium-buy">
-        <div class="premium-buy__price">${escapeHtml(priceText)}<span>/bulan</span></div>
         <div class="premium-plan-list">
           <div class="premium-plan-item">${ICONS.wallet}<span>Dompet tak terbatas (rekening bank, e-wallet, dll)</span></div>
           <div class="premium-plan-item">${ICONS.coin}<span>Cicilan hutang &amp; piutang</span></div>
           <div class="premium-plan-item">${ICONS.cloud}<span>Cadangkan &amp; pulihkan data lewat cloud</span></div>
           <div class="premium-plan-item">${ICONS.swap}<span>Transfer saldo antar dompet</span></div>
         </div>
-        <p class="premium-buy__note">Pembayaran diproses aman lewat Google Play. Bisa dibatalkan kapan saja lewat Play Store.</p>
+        <p class="premium-buy__note">Harga akan ditampilkan Google Play di layar berikutnya. Bisa dibatalkan kapan saja lewat Play Store.</p>
       </div>`,
     showCancelButton: true,
-    confirmButtonText: 'Beli Sekarang',
+    confirmButtonText: 'Berlangganan Sekarang',
     cancelButtonText: 'Nanti Saja'
   });
-  if(res.isConfirmed) prosesPembelian();
+  if(res.isConfirmed) window.Android.beliPremium();
 }
+
+/* ---------------------------------------------------------------------- */
+/* 4C. JEMBATAN BALIK DARI NATIVE (dipanggil oleh MainActivity.kt lewat    */
+/*     notifyWeb() setelah alur Play Billing native selesai/dibatalkan/    */
+/*     gagal). TAMBAHAN saat migrasi TWA -> native WebView + Kotlin.       */
+/*     CATATAN KEAMANAN: sama seperti isPremiumUser() di atas, ini set     */
+/*     status Premium langsung di klien tanpa verifikasi server. Untuk     */
+/*     keamanan setara alur PaymentRequest lama (bagian 17), idealnya      */
+/*     MainActivity.kt mengirim purchase.purchaseToken lewat parameter     */
+/*     onPremiumPurchased, lalu di sini dikirim ke EDGE_FN_VERIFY_PURCHASE */
+/*     sebelum benar-benar mengaktifkan status Premium.                   */
+/* ---------------------------------------------------------------------- */
+window.onPremiumPurchased = function(){
+  DB.settings.isPremium = true;
+  saveDB();
+  renderAll();
+  swalFire({
+    title: 'Premium Aktif! 🎉',
+    html: '<p class="swal-theme-html">Terima kasih! Semua fitur Premium sudah terbuka untuk akunmu.</p>',
+    confirmButtonText: 'Mulai Pakai'
+  });
+};
+
+window.onPremiumCancelled = function(){
+  notify('Pembelian dibatalkan', 'info');
+};
+
+window.onPremiumError = function(message){
+  notify('Gagal memproses pembelian: ' + (message || 'terjadi kesalahan'), 'error');
+};
 
 /* ---------------------------------------------------------------------- */
 /* 5. WALLET: render, picker, tambah/hapus                                 */
