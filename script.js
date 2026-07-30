@@ -1798,11 +1798,32 @@ function toggleTheme(){
 }
 
 function backupData(){
-  const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
+  const jsonString = JSON.stringify(DB, null, 2);
+  const namaFile = `backup-bukukasaul-${localDateStr()}.json`;
+
+  /* DIUBAH (migrasi TWA -> native WebView + Kotlin): dulu backup SELALU lewat
+     Blob + <a download> di bawah. Itu otomatis berhasil di TWA karena Chrome
+     menangani blob: URL secara native. Di WebView biasa, blob: URL itu harus
+     ditangkap ULANG oleh MainActivity.kt (setDownloadListener) secara
+     ASINKRON -- sementara URL.revokeObjectURL(url) di bawah jalan SINKRON,
+     sesaat setelah a.click(). Blob-nya jadi sudah tidak valid lagi saat sisi
+     native sempat mengambilnya, sehingga file GAGAL tersimpan -- padahal
+     notify() di bawah tetap tampil karena tidak menunggu konfirmasi apa pun
+     dari native. Ini penyebab "backup berhasil tapi file json tidak ada".
+     Sekarang: kalau berjalan di dalam app native, kirim JSON langsung lewat
+     jembatan Android.simpanTeksLangsung() -- satu panggilan sinkron, tanpa
+     Blob/blob: URL sama sekali, jadi tidak mungkin kena masalah di atas. */
+  const isNativeApp = !!(window.Android && typeof window.Android.simpanTeksLangsung === 'function');
+  if(isNativeApp){
+    window.Android.simpanTeksLangsung(jsonString, namaFile);
+    return; // toast sukses/gagal ditampilkan native lewat simpanTeksKeUnduhan()
+  }
+
+  const blob = new Blob([jsonString], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `backup-bukukasaul-${localDateStr()}.json`;
+  a.download = namaFile;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
