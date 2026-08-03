@@ -29,6 +29,7 @@ const ICONS = {
   trash: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6 7l1 13a1 1 0 0 0 1 .9h8a1 1 0 0 0 1-.9L18 7"/></svg>',
   trashSm: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4.5h6V7M6 7l1 13a1 1 0 0 0 1 .9h8a1 1 0 0 0 1-.9L18 7"/></svg>',
   check: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m4 12.5 5.5 5.5L20 6.5"/></svg>',
+  close: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   coin: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.2c0-1.1 1-2 2.5-2s2.5.7 2.5 1.7c0 2.3-5 1.5-5 4 0 1 1 1.8 2.5 1.8s2.5-.8 2.5-1.9M12 6v1.1M12 16.9V18"/></svg>',
   plus: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
   wallet: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h12A2 2 0 0 1 19.5 7.5V8h-14Z"/><path d="M3.5 8v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10.5a1.5 1.5 0 0 0-1.5-1.5h-3a2 2 0 1 0 0 4"/></svg>',
@@ -663,8 +664,8 @@ function renderHomeSummary(){
   const w = getSelectedWallet();
   const today = localDateStr();
   const txs = DB.transactions.filter(t=>t.walletId===w.id && t.date===today);
-  const income = txs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-  const expense = txs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  const income = txs.filter(t=>t.type==='income' && !t.excludeFromReport).reduce((s,t)=>s+t.amount,0);
+  const expense = txs.filter(t=>t.type==='expense' && !t.excludeFromReport).reduce((s,t)=>s+t.amount,0);
   $('#summary-income-value').textContent = formatRupiah(income);
   $('#summary-expense-value').textContent = formatRupiah(expense);
 }
@@ -843,6 +844,30 @@ async function pickCategoryValue(current){
   return result.isConfirmed ? result.value : null;
 }
 
+/** Popup pilihan "Ya" / "Tidak" bergaya swal-list (dipakai untuk opsi
+    "Catat Sebagai Pemasukan/Pengeluaran"). Mengembalikan true/false, atau
+    undefined bila dibatalkan. */
+async function pickYesNo(title, current){
+  const result = await swalFire({
+    title,
+    html: `<div class="swal-list">
+        <button type="button" class="swal-list__item ${current?'swal-list__item--active':''}" data-yesno="ya">${ICONS.check}<span>Ya</span></button>
+        <button type="button" class="swal-list__item ${!current?'swal-list__item--active':''}" data-yesno="tidak">${ICONS.close}<span>Tidak</span></button>
+      </div>`,
+    showConfirmButton: false,
+    showCancelButton: true,
+    cancelButtonText: 'Batal',
+    didOpen: (popup) => {
+      $all('[data-yesno]', popup).forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          Swal.close({ isConfirmed: true, value: btn.getAttribute('data-yesno') === 'ya' });
+        });
+      });
+    }
+  });
+  return result.isConfirmed ? result.value : undefined;
+}
+
 function descriptionListHtml(category){
   const list = DB.descriptions[category];
   if(!list.length){
@@ -922,8 +947,8 @@ async function openDescriptionPicker(category, onSelect){
 /* 7. TRANSAKSI: render baris, riwayat, detail kategori, edit/hapus         */
 /* ---------------------------------------------------------------------- */
 const TX_SOURCE_BADGE = {
-  'debt': 'Hutang', 'debt-payment': 'Bayar Hutang',
-  'receivable': 'Piutang', 'receivable-payment': 'Bayar Piutang',
+  'debt': 'Hutang', 'debt-payment': 'Bayar Hutang', 'debt-addition': 'Tambah Hutang',
+  'receivable': 'Piutang', 'receivable-payment': 'Bayar Piutang', 'receivable-addition': 'Tambah Piutang',
   'transfer-out': 'Transfer', 'transfer-in': 'Transfer'
 };
 
@@ -938,6 +963,7 @@ function txRowHtml(tx){
         <span>${formatDateID(tx.date)} · ${tx.time}</span>
         <span class="tx-row__badge">${escapeHtml(getWalletName(tx.walletId))}</span>
         ${badge?`<span class="tx-row__badge">${badge}</span>`:''}
+        ${tx.excludeFromReport?`<span class="tx-row__badge">Di luar saldo &amp; laporan</span>`:''}
       </div>
     </span>
     <span class="tx-row__amount">${tx.type==='income'?'+':'-'} ${formatRupiah(tx.amount)}</span>
@@ -981,7 +1007,7 @@ function openCategoryDetail(type){
 
 function renderCategoryDetail(){
   const { type, walletId, range } = categoryDetailCtx;
-  let txs = DB.transactions.filter(t=>t.walletId===walletId && t.type===type);
+  let txs = DB.transactions.filter(t=>t.walletId===walletId && t.type===type && !t.excludeFromReport);
   if(range) txs = txs.filter(t=>t.date>=range.from && t.date<=range.to);
   txs = sortTxDesc(txs);
   $('#category-detail-range').textContent = `${formatRangeLabel(range)} · ${getWalletName(walletId)}`;
@@ -1020,6 +1046,10 @@ function handleEditTx(tx){
     notify('Cicilan/pelunasan tidak dapat diedit langsung. Hapus cicilan ini bila perlu koreksi.', 'error');
     return;
   }
+  if(tx.source === 'debt-addition' || tx.source === 'receivable-addition'){
+    notify('Penambahan tidak dapat diedit langsung. Hapus penambahan ini bila perlu koreksi.', 'error');
+    return;
+  }
   if(tx.source === 'transfer-out' || tx.source === 'transfer-in'){
     notify('Transaksi transfer tidak dapat diedit. Hapus lalu buat ulang bila perlu.', 'error');
     return;
@@ -1048,6 +1078,16 @@ async function handleDeleteTx(tx){
   if(tx.source === 'receivable-payment'){
     const ok = await swalConfirmDanger('Hapus Cicilan Ini?', 'Saldo dompet dan sisa piutang akan disesuaikan kembali.');
     if(ok){ deletePaymentCascade('receivable', tx.relatedId, tx.id); renderAll(); notify('Cicilan dihapus'); }
+    return;
+  }
+  if(tx.source === 'debt-addition'){
+    const ok = await swalConfirmDanger('Hapus Penambahan Ini?', 'Saldo dompet dan jumlah hutang akan disesuaikan kembali.');
+    if(ok){ deleteAdditionCascade('debt', tx.relatedId, tx.id); renderAll(); notify('Penambahan hutang dihapus'); }
+    return;
+  }
+  if(tx.source === 'receivable-addition'){
+    const ok = await swalConfirmDanger('Hapus Penambahan Ini?', 'Saldo dompet dan jumlah piutang akan disesuaikan kembali.');
+    if(ok){ deleteAdditionCascade('receivable', tx.relatedId, tx.id); renderAll(); notify('Penambahan piutang dihapus'); }
     return;
   }
   if(tx.source === 'transfer-out' || tx.source === 'transfer-in'){
@@ -1143,22 +1183,86 @@ function addDebtOrReceivable(kind, data){
   const wallet = getSelectedWallet();
   const id = uid(kind);
   const txId = uid('tx');
+  // countInReport: apakah transaksi awal ini dihitung sebagai Pemasukan
+  // (utk hutang) / Pengeluaran (utk piutang) di ringkasan, grafik, detail
+  // kategori, dan invoice. Default true (Ya) = perilaku lama, tidak berubah.
+  const countInReport = data.countInReport !== false;
   const record = {
     id, name: data.name, amount: data.amount, remaining: data.amount,
     date: data.date, time: data.time, walletId: wallet.id,
-    status: 'belum', payments: [], transactionId: txId, imported: false
+    status: 'belum', payments: [], additions: [], transactionId: txId,
+    imported: false, countInReport
   };
   const tx = {
     id: txId, walletId: wallet.id, type: cfg.txInitialType,
     date: data.date, time: data.time,
     description: `${cfg.initialLabel} ${data.name}`, amount: data.amount,
-    source: kind, relatedId: id, createdAt: Date.now()
+    source: kind, relatedId: id, createdAt: Date.now(),
+    excludeFromReport: !countInReport
   };
   DB[cfg.store].unshift(record);
   DB.transactions.unshift(tx);
-  applyBalanceDelta(wallet.id, cfg.initialSign * data.amount);
+  // Saldo dompet HANYA disesuaikan bila dicatat sebagai pemasukan/pengeluaran
+  // (Ya). Bila "Tidak", catatan ini murni buku catatan hutang/piutang saja
+  // dan tidak dianggap sebagai arus kas nyata.
+  if(countInReport) applyBalanceDelta(wallet.id, cfg.initialSign * data.amount);
   saveDB();
   return record;
+}
+
+/** Menambah nominal ke catatan hutang/piutang YANG SUDAH ADA (mis. orang yang
+    sama berhutang lagi), tanpa perlu membuat catatan baru. Menambah
+    record.amount & record.remaining, plus membuat transaksi baru yang
+    mengikuti pengaturan "Catat Sebagai Pemasukan/Pengeluaran" milik catatan
+    ini (record.countInReport). */
+function addAmountToDebtOrReceivable(kind, id, data){
+  const cfg = KIND_CONFIG[kind];
+  const record = DB[cfg.store].find(r=>r.id===id);
+  if(!record) return;
+  const txId = uid('tx');
+  const tx = {
+    id: txId, walletId: record.walletId, type: cfg.txInitialType,
+    date: data.date, time: data.time,
+    description: `${cfg.initialLabel} ${record.name} (tambahan)`, amount: data.amount,
+    source: kind + '-addition', relatedId: id, createdAt: Date.now(),
+    excludeFromReport: !(record.countInReport !== false)
+  };
+  DB.transactions.unshift(tx);
+  if(record.countInReport !== false) applyBalanceDelta(record.walletId, cfg.initialSign * data.amount);
+  if(!Array.isArray(record.additions)) record.additions = [];
+  record.additions.push({ id: uid('add'), amount: data.amount, date: data.date, time: data.time, transactionId: txId });
+  const paidSoFar = record.amount - record.remaining;
+  record.amount += data.amount;
+  record.remaining += data.amount;
+  record.status = paidSoFar > 0 ? 'cicil' : 'belum';
+  saveDB();
+  return record;
+}
+
+/** Mengubah pengaturan "Catat Sebagai Pemasukan/Pengeluaran" pada sebuah
+    catatan hutang/piutang, dan menerapkannya ke SEMUA transaksi terkait
+    (transaksi awal, tambahan, dan cicilan) supaya laporan tetap konsisten.
+    Saldo dompet turut disesuaikan RETROAKTIF: kalau baru dinyalakan (Tidak
+    -> Ya), efek bersihnya baru ditambahkan ke saldo; kalau baru dimatikan
+    (Ya -> Tidak), efek bersih yang sudah ada di saldo dibalik/dihapus. */
+function setCountInReport(kind, id, value){
+  const cfg = KIND_CONFIG[kind];
+  const record = DB[cfg.store].find(r=>r.id===id);
+  if(!record) return;
+  const wasOn = record.countInReport !== false;
+  if(wasOn !== value){
+    const paymentsTotal = (record.payments||[]).reduce((s,p)=>s+p.amount,0);
+    const netEffect = cfg.initialSign * record.amount + cfg.paymentSign * paymentsTotal;
+    applyBalanceDelta(record.walletId, value ? netEffect : -netEffect);
+  }
+  record.countInReport = value;
+  const relatedTxIds = new Set([
+    record.transactionId,
+    ...(record.payments||[]).map(p=>p.transactionId),
+    ...(record.additions||[]).map(a=>a.transactionId)
+  ].filter(Boolean));
+  DB.transactions.forEach(t=>{ if(relatedTxIds.has(t.id)) t.excludeFromReport = !value; });
+  saveDB();
 }
 
 function payDebtOrReceivable(kind, id, amount, isFull){
@@ -1172,10 +1276,11 @@ function payDebtOrReceivable(kind, id, amount, isFull){
     id: txId, walletId: record.walletId, type: cfg.txPaymentType,
     date: localDateStr(), time: localTimeStr(),
     description: `${cfg.paymentLabel} ${record.name}`, amount: pay,
-    source: kind + '-payment', relatedId: id, createdAt: Date.now()
+    source: kind + '-payment', relatedId: id, createdAt: Date.now(),
+    excludeFromReport: !(record.countInReport !== false)
   };
   DB.transactions.unshift(tx);
-  applyBalanceDelta(record.walletId, cfg.paymentSign * pay);
+  if(record.countInReport !== false) applyBalanceDelta(record.walletId, cfg.paymentSign * pay);
   record.payments.push({ id: uid('pay'), amount: pay, date: tx.date, time: tx.time, transactionId: txId });
   record.remaining -= pay;
   record.status = record.remaining <= 0 ? 'lunas' : 'cicil';
@@ -1195,8 +1300,12 @@ function editDebtOrReceivableCore(kind, id, data){
   record.status = record.remaining <= 0 ? 'lunas' : (paidSoFar > 0 ? 'cicil' : 'belum');
   const tx = DB.transactions.find(t=>t.id===record.transactionId);
   if(tx){
-    applyBalanceDelta(tx.walletId, cfg.initialSign * delta);
-    tx.amount = data.amount; tx.date = data.date; tx.time = data.time;
+    if(record.countInReport !== false) applyBalanceDelta(tx.walletId, cfg.initialSign * delta);
+    // Disesuaikan dengan SELISIH (delta), bukan ditimpa langsung dengan
+    // data.amount -- supaya tetap benar walau record.amount sudah mencakup
+    // nominal dari "Tambah Hutang/Piutang" (transaksi tambahan tersimpan
+    // terpisah, jadi tidak boleh ikut tertimpa oleh transaksi awal ini).
+    tx.amount += delta; tx.date = data.date; tx.time = data.time;
   }
   saveDB();
 }
@@ -1209,13 +1318,39 @@ function deleteDebtOrReceivableCascade(kind, id){
   // mengurangi saldo (efeknya sudah tercakup lewat transaksi yang diimpor
   // terpisah), jadi saldo TIDAK dikoreksi ulang di sini untuk data itu --
   // supaya tidak terjadi penyesuaian saldo dobel.
-  if(!record.imported){
+  if(!record.imported && record.countInReport !== false){
+    // record.amount sudah mencakup seluruh nominal tambahan ("Tambah Hutang/
+    // Piutang"), jadi cukup dikoreksi sekali di sini tanpa perlu me-loop
+    // record.additions secara terpisah.
     applyBalanceDelta(record.walletId, -cfg.initialSign * record.amount);
     record.payments.forEach(p=> applyBalanceDelta(record.walletId, -cfg.paymentSign * p.amount));
   }
-  const relatedTxIds = new Set([record.transactionId, ...record.payments.map(p=>p.transactionId)].filter(Boolean));
+  const relatedTxIds = new Set([
+    record.transactionId,
+    ...(record.payments||[]).map(p=>p.transactionId),
+    ...(record.additions||[]).map(a=>a.transactionId)
+  ].filter(Boolean));
   DB.transactions = DB.transactions.filter(t=>!relatedTxIds.has(t.id));
   DB[cfg.store] = DB[cfg.store].filter(r=>r.id!==id);
+  saveDB();
+}
+
+/** Menghapus satu entri "Tambah Hutang/Piutang" (bukan menghapus seluruh
+    catatan) -- mengembalikan saldo dompet dan mengurangi kembali
+    amount/remaining pada catatan induknya. */
+function deleteAdditionCascade(kind, recordId, transactionId){
+  const cfg = KIND_CONFIG[kind];
+  const record = DB[cfg.store].find(r=>r.id===recordId);
+  if(!record) return;
+  const addition = (record.additions||[]).find(a=>a.transactionId===transactionId);
+  if(!addition) return;
+  if(record.countInReport !== false) applyBalanceDelta(record.walletId, -cfg.initialSign * addition.amount);
+  record.amount -= addition.amount;
+  record.remaining = Math.max(0, record.remaining - addition.amount);
+  record.additions = record.additions.filter(a=>a.transactionId!==transactionId);
+  const paidSoFar = record.amount - record.remaining;
+  record.status = record.remaining <= 0 ? 'lunas' : (paidSoFar > 0 ? 'cicil' : 'belum');
+  DB.transactions = DB.transactions.filter(t=>t.id!==transactionId);
   saveDB();
 }
 
@@ -1225,7 +1360,7 @@ function deletePaymentCascade(kind, recordId, transactionId){
   if(!record) return;
   const payment = record.payments.find(p=>p.transactionId===transactionId);
   if(!payment) return;
-  applyBalanceDelta(record.walletId, -cfg.paymentSign * payment.amount);
+  if(record.countInReport !== false) applyBalanceDelta(record.walletId, -cfg.paymentSign * payment.amount);
   record.remaining += payment.amount;
   record.payments = record.payments.filter(p=>p.transactionId!==transactionId);
   record.status = record.remaining >= record.amount ? 'belum' : (record.remaining <= 0 ? 'lunas' : 'cicil');
@@ -1237,6 +1372,9 @@ function recordRowHtml(r, kind){
   const pct = r.amount > 0 ? Math.min(100, Math.round(((r.amount - r.remaining) / r.amount) * 100)) : 0;
   const markClass = r.status==='lunas' ? 'mark--lunas' : r.status==='cicil' ? 'mark--cicil' : 'mark--belum';
   const markText = r.status==='lunas' ? 'Lunas' : r.status==='cicil' ? 'Cicil' : 'Belum Lunas';
+  const excludedNote = r.countInReport === false
+    ? `<div class="debt-row__note">Tidak memengaruhi saldo dompet & laporan ${kind==='debt'?'pemasukan':'pengeluaran'}</div>`
+    : '';
   return `
   <div class="debt-row" data-record-id="${r.id}">
     <div class="debt-row__top">
@@ -1247,6 +1385,7 @@ function recordRowHtml(r, kind){
     ${r.status!=='belum' ? `
     <div class="debt-row__progress"><div class="debt-row__progress-fill" style="width:${pct}%"></div></div>
     <div class="debt-row__remaining">Sisa: ${formatRupiah(r.remaining)}</div>` : ''}
+    ${excludedNote}
   </div>`;
 }
 
@@ -1279,12 +1418,16 @@ async function openRecordActionPopup(kind, id){
   if(!record) return;
   const notLunas = record.status !== 'lunas';
   const premium = isPremiumUser();
+  const countInReport = record.countInReport !== false;
+  const reportLabel = kind==='debt' ? 'Catat Sebagai Pemasukan' : 'Catat Sebagai Pengeluaran';
   await swalFire({
     title: record.name,
     html: `<p class="swal-theme-html" style="margin-top:-8px;">${cfg.label} · ${formatRupiah(record.amount)} · Sisa ${formatRupiah(record.remaining)}</p>
       <div class="swal-list" style="margin-top:14px;">
+        <button type="button" class="swal-list__item" id="act-tambah">${ICONS.plus}<span>Tambah ${cfg.label}</span></button>
         ${notLunas ? `<button type="button" class="swal-list__item" id="act-lunas">${ICONS.check}<span>Tandai Lunas</span></button>` : ''}
         ${notLunas ? `<button type="button" class="swal-list__item ${!premium?'swal-list__item--locked':''}" id="act-cicil">${ICONS.coin}<span>Cicil</span>${!premium?proBadgeHtml():''}</button>` : ''}
+        <button type="button" class="swal-list__item" id="act-toggle-report">${countInReport?ICONS.check:ICONS.close}<span>${reportLabel}</span><span style="margin-left:auto;font-weight:700;font-size:12px;color:var(--text-muted);">${countInReport?'Ya':'Tidak'}</span></button>
         <button type="button" class="swal-list__item" id="act-edit">${ICONS.edit}<span>Edit ${cfg.label}</span></button>
         <button type="button" class="swal-list__item swal-list__item--danger" id="act-delete">${ICONS.trash}<span>Hapus</span></button>
       </div>`,
@@ -1294,9 +1437,17 @@ async function openRecordActionPopup(kind, id){
     didOpen: (popup) => {
       const lunasBtn = $('#act-lunas', popup);
       const cicilBtn = $('#act-cicil', popup);
+      $('#act-tambah', popup).addEventListener('click', ()=>{
+        Swal.close();
+        openAddAmountForm(kind, id);
+      });
       if(lunasBtn) lunasBtn.addEventListener('click', async ()=>{
         Swal.close();
-        const ok = await swalConfirmInfo('Tandai Lunas?', `Sisa ${formatRupiah(record.remaining)} akan dilunasi sekaligus dan saldo dompet akan ${kind==='debt'?'berkurang':'bertambah'}.`);
+        const affectsBalance = record.countInReport !== false;
+        const balanceNote = affectsBalance
+          ? ` dan saldo dompet akan ${kind==='debt'?'berkurang':'bertambah'}`
+          : ' (saldo dompet tidak berubah karena catatan ini tidak dihitung sebagai pemasukan/pengeluaran)';
+        const ok = await swalConfirmInfo('Tandai Lunas?', `Sisa ${formatRupiah(record.remaining)} akan dilunasi sekaligus${balanceNote}.`);
         if(ok){ payDebtOrReceivable(kind, id, 0, true); renderAll(); notify(`${cfg.label} ditandai lunas`); }
         else openRecordActionPopup(kind, id);
       });
@@ -1304,6 +1455,16 @@ async function openRecordActionPopup(kind, id){
         Swal.close();
         if(!guardPremium('Cicil ' + cfg.label, `Membayar ${cfg.label.toLowerCase()} secara bertahap (cicilan) adalah fitur Premium.`)) return;
         openCicilForm(kind, id);
+      });
+      $('#act-toggle-report', popup).addEventListener('click', async ()=>{
+        Swal.close();
+        const v = await pickYesNo(reportLabel, countInReport);
+        if(v !== undefined){
+          setCountInReport(kind, id, v);
+          renderAll();
+          notify(`${reportLabel} diperbarui`);
+        }
+        openRecordActionPopup(kind, id);
       });
       $('#act-edit', popup).addEventListener('click', ()=>{ Swal.close(); openEditRecordForm(kind, id); });
       $('#act-delete', popup).addEventListener('click', async ()=>{
@@ -1314,6 +1475,40 @@ async function openRecordActionPopup(kind, id){
       });
     }
   });
+}
+
+/** Form "Tambah Hutang/Piutang" -- menambah nominal ke catatan yang sudah
+    ada (lawan dari Cicil, yang justru mengurangi sisa). */
+async function openAddAmountForm(kind, id){
+  const cfg = KIND_CONFIG[kind];
+  const record = DB[cfg.store].find(r=>r.id===id);
+  if(!record) return;
+  const { value } = await swalFire({
+    title: `Tambah ${cfg.label}`,
+    html: `<p class="swal-theme-html" style="margin-top:-8px;margin-bottom:10px;">${cfg.label} saat ini: ${formatRupiah(record.amount)}</p>
+      <input type="text" inputmode="numeric" id="swal-add-amount" class="swal-theme-input" placeholder="0" style="width:100%;padding:12px;border-radius:12px;font-weight:700;font-size:16px;">`,
+    showCancelButton: true,
+    confirmButtonText: 'Simpan',
+    cancelButtonText: 'Kembali',
+    focusConfirm: false,
+    didOpen: (popup) => {
+      const inp = $('#swal-add-amount', popup);
+      inp.addEventListener('input', ()=>{ inp.value = formatAmountLive(inp.value); });
+      inp.focus();
+    },
+    preConfirm: () => {
+      const amt = parseAmountInput(document.getElementById('swal-add-amount').value);
+      if(!amt || amt <= 0){ Swal.showValidationMessage('Nominal tambahan harus lebih dari 0'); return false; }
+      return amt;
+    }
+  });
+  if(value){
+    addAmountToDebtOrReceivable(kind, id, { amount: value, date: localDateStr(), time: localTimeStr() });
+    renderAll();
+    notify(`${cfg.label} berhasil ditambahkan`);
+  }else{
+    openRecordActionPopup(kind, id);
+  }
 }
 
 async function openCicilForm(kind, id){
@@ -1377,6 +1572,8 @@ async function openEditRecordForm(kind, id){
       if(!amt || amt <= 0){ Swal.showValidationMessage('Nominal harus lebih dari 0'); return false; }
       const paidSoFar = record.amount - record.remaining;
       if(amt < paidSoFar){ Swal.showValidationMessage(`Nominal tidak boleh kurang dari yang sudah dibayar (${formatRupiah(paidSoFar)})`); return false; }
+      const additionsTotal = (record.additions||[]).reduce((s,a)=>s+a.amount,0);
+      if(amt < additionsTotal){ Swal.showValidationMessage(`Nominal tidak boleh kurang dari total tambahan (${formatRupiah(additionsTotal)})`); return false; }
       return amt;
     }
   });
@@ -1439,7 +1636,7 @@ function renderChart(){
   const rangeLabelEl = $('#chart-range');
   rangeLabelEl.textContent = formatRangeLabel(chartRange);
 
-  const txs = DB.transactions.filter(t=>t.date>=chartRange.from && t.date<=chartRange.to);
+  const txs = DB.transactions.filter(t=>t.date>=chartRange.from && t.date<=chartRange.to && !t.excludeFromReport);
   const canvas = document.getElementById('chart-canvas');
   const emptyEl = document.getElementById('chart-empty');
 
@@ -1521,7 +1718,7 @@ function groupSum(txs){
 }
 
 function computeInvoiceData(){
-  const txs = DB.transactions.filter(t=>t.date>=invoiceRange.from && t.date<=invoiceRange.to);
+  const txs = DB.transactions.filter(t=>t.date>=invoiceRange.from && t.date<=invoiceRange.to && !t.excludeFromReport);
   const incomeMap = groupSum(txs.filter(t=>t.type==='income'));
   const expenseMap = groupSum(txs.filter(t=>t.type==='expense'));
   const incomeTotal = Object.values(incomeMap).reduce((a,b)=>a+b,0);
@@ -1985,8 +2182,8 @@ async function openSearchDialog(){
 /* 12. NAVIGASI & INISIALISASI                                              */
 /* ---------------------------------------------------------------------- */
 let currentPage = 'home';
-let hutangDraft = { date: localDateStr(), time: localTimeStr() };
-let piutangDraft = { date: localDateStr(), time: localTimeStr() };
+let hutangDraft = { date: localDateStr(), time: localTimeStr(), countInReport: true };
+let piutangDraft = { date: localDateStr(), time: localTimeStr(), countInReport: true };
 
 /* Render ulang konten halaman tertentu -- dipakai baik saat pindah halaman
    lewat klik (menu bawah / kartu ringkasan) maupun saat pindah lewat
@@ -2064,10 +2261,14 @@ function renderAll(){
 function updateHutangDraftUI(){
   $('#hutang-date-value').textContent = isToday(hutangDraft.date) ? 'Hari ini' : formatDateID(hutangDraft.date);
   $('#hutang-time-value').textContent = hutangDraft.time;
+  $('#hutang-record-income-value').textContent = hutangDraft.countInReport ? 'Ya' : 'Tidak';
+  $('#hutang-record-income-icon').innerHTML = hutangDraft.countInReport ? ICONS.check : ICONS.close;
 }
 function updatePiutangDraftUI(){
   $('#piutang-date-value').textContent = isToday(piutangDraft.date) ? 'Hari ini' : formatDateID(piutangDraft.date);
   $('#piutang-time-value').textContent = piutangDraft.time;
+  $('#piutang-record-expense-value').textContent = piutangDraft.countInReport ? 'Ya' : 'Tidak';
+  $('#piutang-record-expense-icon').innerHTML = piutangDraft.countInReport ? ICONS.check : ICONS.close;
 }
 
 function wireStaticEvents(){
@@ -2152,15 +2353,19 @@ function wireStaticEvents(){
     if(v){ hutangDraft.time = v; updateHutangDraftUI(); }
   });
   $('#hutang-amount').addEventListener('input', (e)=>{ e.target.value = formatAmountLive(e.target.value); });
+  $('#hutang-record-income').addEventListener('click', async ()=>{
+    const v = await pickYesNo('Catat Sebagai Pemasukan?', hutangDraft.countInReport);
+    if(v !== undefined){ hutangDraft.countInReport = v; updateHutangDraftUI(); }
+  });
   $('#form-hutang').addEventListener('submit', (e)=>{
     e.preventDefault();
     const name = $('#hutang-name').value.trim();
     const amount = parseAmountInput($('#hutang-amount').value);
     if(!name){ notify('Nama wajib diisi', 'error'); return; }
     if(!amount){ notify('Nominal wajib diisi', 'error'); return; }
-    addDebtOrReceivable('debt', { name, amount, date: hutangDraft.date, time: hutangDraft.time });
+    addDebtOrReceivable('debt', { name, amount, date: hutangDraft.date, time: hutangDraft.time, countInReport: hutangDraft.countInReport });
     $('#hutang-name').value = ''; $('#hutang-amount').value = '';
-    hutangDraft = { date: localDateStr(), time: localTimeStr() };
+    hutangDraft = { date: localDateStr(), time: localTimeStr(), countInReport: true };
     updateHutangDraftUI();
     renderWalletCard(); renderHomeSummary(); renderDebtList();
     notify('Hutang tersimpan');
@@ -2175,15 +2380,19 @@ function wireStaticEvents(){
     if(v){ piutangDraft.time = v; updatePiutangDraftUI(); }
   });
   $('#piutang-amount').addEventListener('input', (e)=>{ e.target.value = formatAmountLive(e.target.value); });
+  $('#piutang-record-expense').addEventListener('click', async ()=>{
+    const v = await pickYesNo('Catat Sebagai Pengeluaran?', piutangDraft.countInReport);
+    if(v !== undefined){ piutangDraft.countInReport = v; updatePiutangDraftUI(); }
+  });
   $('#form-piutang').addEventListener('submit', (e)=>{
     e.preventDefault();
     const name = $('#piutang-name').value.trim();
     const amount = parseAmountInput($('#piutang-amount').value);
     if(!name){ notify('Nama wajib diisi', 'error'); return; }
     if(!amount){ notify('Nominal wajib diisi', 'error'); return; }
-    addDebtOrReceivable('receivable', { name, amount, date: piutangDraft.date, time: piutangDraft.time });
+    addDebtOrReceivable('receivable', { name, amount, date: piutangDraft.date, time: piutangDraft.time, countInReport: piutangDraft.countInReport });
     $('#piutang-name').value = ''; $('#piutang-amount').value = '';
-    piutangDraft = { date: localDateStr(), time: localTimeStr() };
+    piutangDraft = { date: localDateStr(), time: localTimeStr(), countInReport: true };
     updatePiutangDraftUI();
     renderWalletCard(); renderHomeSummary(); renderPiutangList();
     notify('Piutang tersimpan');
