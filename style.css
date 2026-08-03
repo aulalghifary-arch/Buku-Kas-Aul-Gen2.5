@@ -516,6 +516,7 @@ body.dark .bottom-nav__item.is-active{ color: #4FD8C2; }
 .debt-row__progress{ margin-top: 9px; height: 6px; border-radius: var(--radius-pill); background: var(--bg-sunken); overflow: hidden; }
 .debt-row__progress-fill{ height: 100%; border-radius: var(--radius-pill); background: var(--gradient-brass); }
 .debt-row__remaining{ font-size: 11.5px; color: var(--text-secondary); margin-top: 6px; font-weight: 500; }
+.debt-row__note{ font-size: 11px; color: var(--text-muted); margin-top: 5px; font-style: italic; }
 
 .mark{ font-size: 9.5px; font-weight: 800; padding: 2px 8px; border-radius: var(--radius-pill); text-transform: uppercase; letter-spacing: .4px; }
 .mark--lunas{ background: var(--c-emerald-soft); color: var(--c-emerald-light); }
