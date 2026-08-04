@@ -517,6 +517,14 @@ body.dark .bottom-nav__item.is-active{ color: #4FD8C2; }
 .debt-row__progress-fill{ height: 100%; border-radius: var(--radius-pill); background: var(--gradient-brass); }
 .debt-row__remaining{ font-size: 11.5px; color: var(--text-secondary); margin-top: 6px; font-weight: 500; }
 .debt-row__note{ font-size: 11px; color: var(--text-muted); margin-top: 5px; font-style: italic; }
+.debt-row__additions{ margin-top: 8px; padding: 7px 10px; border-radius: 10px; background: var(--bg-sunken); }
+.debt-row__additions-label{ font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); margin-bottom: 3px; }
+.debt-row__addition-item{ display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; padding: 3px 0; }
+.debt-row__addition-item + .debt-row__addition-item{ border-top: 1px dashed var(--border-soft); }
+.debt-row__addition-date{ color: var(--text-secondary); }
+.debt-row__addition-amount{ font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.debt-row__addition-amount--debt{ color: var(--c-emerald-light); }
+.debt-row__addition-amount--receivable{ color: var(--c-coral); }
 
 .mark{ font-size: 9.5px; font-weight: 800; padding: 2px 8px; border-radius: var(--radius-pill); text-transform: uppercase; letter-spacing: .4px; }
 .mark--lunas{ background: var(--c-emerald-soft); color: var(--c-emerald-light); }
