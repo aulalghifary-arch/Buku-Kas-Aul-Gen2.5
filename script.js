@@ -1375,13 +1375,34 @@ function recordRowHtml(r, kind){
   const excludedNote = r.countInReport === false
     ? `<div class="debt-row__note">Tidak memengaruhi saldo dompet & laporan ${kind==='debt'?'pemasukan':'pengeluaran'}</div>`
     : '';
+  // Rincian "Tambah Hutang/Piutang": tampilkan nominal awal (sebelum ada
+  // tambahan) di baris meta, lalu daftar setiap tambahan lengkap dengan
+  // tanggal & waktunya -- supaya tidak perlu buka halaman Riwayat untuk tahu
+  // kapan penambahan itu terjadi.
+  const additionsList = Array.isArray(r.additions) ? r.additions.slice() : [];
+  additionsList.sort((a,b)=> (b.date+b.time).localeCompare(a.date+a.time));
+  const additionsTotal = additionsList.reduce((s,a)=>s+a.amount,0);
+  const initialAmount = r.amount - additionsTotal;
+  const metaLine = additionsList.length
+    ? `Awal ${formatRupiah(initialAmount)} · ${formatDateID(r.date)} · ${r.time} · ${escapeHtml(getWalletName(r.walletId))}`
+    : `${formatDateID(r.date)} · ${r.time} · ${escapeHtml(getWalletName(r.walletId))}`;
+  const additionsHtml = additionsList.length ? `
+    <div class="debt-row__additions">
+      <div class="debt-row__additions-label">Riwayat Tambahan (${additionsList.length})</div>
+      ${additionsList.map(a => `
+        <div class="debt-row__addition-item">
+          <span class="debt-row__addition-date">${formatDateID(a.date)} · ${a.time}</span>
+          <span class="debt-row__addition-amount debt-row__addition-amount--${kind}">+ ${formatRupiah(a.amount)}</span>
+        </div>`).join('')}
+    </div>` : '';
   return `
   <div class="debt-row" data-record-id="${r.id}">
     <div class="debt-row__top">
       <span class="debt-row__name">${escapeHtml(r.name)} <span class="mark ${markClass}">${markText}</span></span>
       <span class="debt-row__amount">${formatRupiah(r.amount)}</span>
     </div>
-    <div class="debt-row__meta">${formatDateID(r.date)} · ${r.time} · ${escapeHtml(getWalletName(r.walletId))}</div>
+    <div class="debt-row__meta">${metaLine}</div>
+    ${additionsHtml}
     ${r.status!=='belum' ? `
     <div class="debt-row__progress"><div class="debt-row__progress-fill" style="width:${pct}%"></div></div>
     <div class="debt-row__remaining">Sisa: ${formatRupiah(r.remaining)}</div>` : ''}
