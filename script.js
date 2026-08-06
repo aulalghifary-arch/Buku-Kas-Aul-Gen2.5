@@ -723,6 +723,57 @@ async function openWalletPicker(){
   });
 }
 
+/** Picker dompet KHUSUS halaman Cetak Laporan -- hanya mengubah cakupan
+    filter laporan (invoiceWalletId), TIDAK mengubah dompet aktif aplikasi
+    (DB.settings.selectedWalletId). Mengikuti aturan kunci Premium yang sama
+    dengan openWalletPicker: dompet selain dompet gratis terkunci bila belum
+    Premium. */
+async function openInvoiceWalletPicker(){
+  const premium = isPremiumUser();
+  const wallets = DB.wallets;
+  const allActive = invoiceWalletId === 'all';
+  const itemsHtml = wallets.map(w => {
+    const locked = !premium && w.id !== FREE_WALLET_ID;
+    const active = !allActive && w.id === invoiceWalletId;
+    return `
+    <button type="button" class="swal-list__item ${active?'swal-list__item--active':''} ${locked?'swal-list__item--locked':''}" data-wallet-id="${w.id}" ${locked?'data-locked="1"':''}>
+      ${ICONS.wallet}<span>${escapeHtml(w.name)}</span>
+      ${locked?proBadgeHtml():''}
+    </button>`;
+  }).join('');
+
+  await swalFire({
+    title: 'Laporan Dompet Mana?',
+    html: `<div class="swal-list">
+        <button type="button" class="swal-list__item ${allActive?'swal-list__item--active':''}" id="swal-invoice-wallet-all">${ICONS.wallet}<span>Semua Dompet</span></button>
+        <div class="swal-list__divider"></div>
+        ${itemsHtml}
+      </div>`,
+    showConfirmButton: false,
+    showCancelButton: true,
+    cancelButtonText: 'Kembali',
+    didOpen: (popup) => {
+      $('#swal-invoice-wallet-all', popup).addEventListener('click', ()=>{
+        Swal.close();
+        invoiceWalletId = 'all';
+        renderInvoicePreview();
+      });
+      $all('[data-wallet-id]', popup).forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          if(btn.hasAttribute('data-locked')){
+            Swal.close();
+            guardPremium('Laporan Per Dompet', 'Mencetak laporan khusus dompet selain dompet gratis adalah fitur Premium.');
+            return;
+          }
+          Swal.close();
+          invoiceWalletId = btn.getAttribute('data-wallet-id');
+          renderInvoicePreview();
+        });
+      });
+    }
+  });
+}
+
 async function promptAddWallet(){
   const { value: name } = await swalFire({
     title: 'Tambah Dompet',
@@ -779,6 +830,7 @@ async function promptDeleteWallet(){
           if(ok){
             DB.wallets = DB.wallets.filter(x=>x.id!==id);
             if(DB.settings.selectedWalletId === id) DB.settings.selectedWalletId = DB.wallets[0].id;
+            if(invoiceWalletId === id) invoiceWalletId = 'all';
             saveDB();
             renderWalletCard();
             renderHomeSummary();
@@ -1731,6 +1783,15 @@ function renderChart(){
 /* 10. INVOICE / CETAK LAPORAN (jsPDF + autotable)                          */
 /* ---------------------------------------------------------------------- */
 let invoiceRange = todayRange();
+// 'all' = gabungan semua dompet (perilaku lama). Selain itu diisi id dompet
+// spesifik supaya laporan hanya mencakup transaksi dari dompet tersebut.
+let invoiceWalletId = 'all';
+
+function invoiceWalletLabel(){
+  if(invoiceWalletId === 'all') return 'Semua Dompet';
+  const w = DB.wallets.find(x=>x.id===invoiceWalletId);
+  return w ? w.name : 'Semua Dompet';
+}
 
 function groupSum(txs){
   const map = {};
@@ -1739,7 +1800,10 @@ function groupSum(txs){
 }
 
 function computeInvoiceData(){
-  const txs = DB.transactions.filter(t=>t.date>=invoiceRange.from && t.date<=invoiceRange.to && !t.excludeFromReport);
+  const txs = DB.transactions.filter(t=>
+    t.date>=invoiceRange.from && t.date<=invoiceRange.to && !t.excludeFromReport &&
+    (invoiceWalletId === 'all' || t.walletId === invoiceWalletId)
+  );
   const incomeMap = groupSum(txs.filter(t=>t.type==='income'));
   const expenseMap = groupSum(txs.filter(t=>t.type==='expense'));
   const incomeTotal = Object.values(incomeMap).reduce((a,b)=>a+b,0);
@@ -1749,6 +1813,7 @@ function computeInvoiceData(){
 
 function renderInvoicePreview(){
   $('#invoice-range').textContent = formatRangeLabel(invoiceRange);
+  $('#invoice-wallet').textContent = invoiceWalletLabel();
   const data = computeInvoiceData();
   const container = $('#invoice-preview');
   const incomeEntries = Object.entries(data.incomeMap);
@@ -1766,7 +1831,7 @@ function renderInvoicePreview(){
 
   container.innerHTML = `
     <div class="invoice-preview__brand">Buku Kas Aul Gen2.5</div>
-    <div class="invoice-preview__meta">Laporan ${formatDateID(invoiceRange.from)} – ${formatDateID(invoiceRange.to)}</div>
+    <div class="invoice-preview__meta">Laporan ${formatDateID(invoiceRange.from)} – ${formatDateID(invoiceRange.to)} · ${escapeHtml(invoiceWalletLabel())}</div>
     ${incomeRows ? `<div class="list-heading" style="margin-top:2px;">Pendapatan</div>${incomeRows}
       <div class="invoice-subtotal"><span>Total Pendapatan</span><span style="color:var(--c-emerald-light)">${formatRupiah(data.incomeTotal)}</span></div>` : ''}
     ${expenseRows ? `<div class="list-heading" style="margin-top:14px;">Pengeluaran</div>${expenseRows}
@@ -1913,7 +1978,7 @@ async function generateInvoicePdf(){
     doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(210,228,224);
     doc.text('Laporan Keuangan Pribadi', textX, 58);
     doc.setFontSize(9); doc.setTextColor(180,206,200);
-    doc.text(`Periode ${formatDateID(invoiceRange.from)} \u2013 ${formatDateID(invoiceRange.to)}`, textX, 72);
+    doc.text(`Periode ${formatDateID(invoiceRange.from)} \u2013 ${formatDateID(invoiceRange.to)} \u00b7 ${invoiceWalletLabel()}`, textX, 72);
 
     const fy = PAGE_H - FOOTER_H + 16;
     doc.setDrawColor(...LINE); doc.setLineWidth(0.6);
@@ -1923,7 +1988,8 @@ async function generateInvoicePdf(){
     doc.text(`Halaman ${i}/${totalPages}`, RIGHT, fy, { align: 'right' });
   }
 
-  const fname = `Laporan-BukuKasAul-${invoiceRange.from}_${invoiceRange.to}.pdf`;
+  const walletSlug = invoiceWalletId === 'all' ? 'SemuaDompet' : invoiceWalletLabel().replace(/\s+/g, '');
+  const fname = `Laporan-BukuKasAul-${walletSlug}-${invoiceRange.from}_${invoiceRange.to}.pdf`;
   doc.save(fname);
   notify('Laporan PDF berhasil diunduh');
 }
@@ -2072,7 +2138,7 @@ async function restoreDataPrompt(){
         document.body.classList.toggle('dark', DB.settings.theme === 'dark');
         syncStatusBarColor();
         historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
-        chartRange = todayRange(); invoiceRange = todayRange();
+        chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all';
         renderAll();
         syncPremiumStatusFromCloud(); // jaga-jaga file backup lama bawa status premium basi
         notify('Data berhasil dipulihkan');
@@ -2090,7 +2156,7 @@ async function resetDataPrompt(){
     DB = defaultData();
     saveDB();
     historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
-    chartRange = todayRange(); invoiceRange = todayRange();
+    chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all';
     renderAll();
     syncPremiumStatusFromCloud(); // defaultData() mereset isPremium lokal ke false, ambil status asli lagi
     notify('Semua data telah direset');
@@ -2444,6 +2510,7 @@ function wireStaticEvents(){
     renderInvoicePreview();
   });
   $('#btn-generate-invoice').addEventListener('click', generateInvoicePdf);
+  $('#btn-filter-invoice-wallet').addEventListener('click', openInvoiceWalletPicker);
 
   $all('.bottom-nav__item').forEach(btn=>{
     btn.addEventListener('click', ()=> handleNavigate(btn.getAttribute('data-nav')));
@@ -2871,7 +2938,7 @@ async function restoreFromCloudBackup(){
     document.body.classList.toggle('dark', DB.settings.theme === 'dark');
     syncStatusBarColor();
     historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range: todayRange() };
-    chartRange = todayRange(); invoiceRange = todayRange();
+    chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all';
     renderAll();
     syncPremiumStatusFromCloud(); // jaga-jaga cadangan cloud lama bawa status premium basi
     notify('Data berhasil dipulihkan dari cloud');
