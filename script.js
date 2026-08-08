@@ -831,6 +831,7 @@ async function promptDeleteWallet(){
             DB.wallets = DB.wallets.filter(x=>x.id!==id);
             if(DB.settings.selectedWalletId === id) DB.settings.selectedWalletId = DB.wallets[0].id;
             if(invoiceWalletId === id) invoiceWalletId = 'all';
+            if(chartWalletId === id) chartWalletId = 'all';
             saveDB();
             renderWalletCard();
             renderHomeSummary();
@@ -1666,6 +1667,65 @@ async function openEditRecordForm(kind, id){
 let chartType = 'bar';
 let chartRange = todayRange();
 let chartInstance = null;
+// 'all' = gabungan semua dompet (perilaku lama). Selain itu diisi id dompet
+// spesifik supaya grafik hanya mencakup transaksi dari dompet tersebut.
+let chartWalletId = 'all';
+
+function chartWalletLabel(){
+  if(chartWalletId === 'all') return 'Semua Dompet';
+  const w = DB.wallets.find(x=>x.id===chartWalletId);
+  return w ? w.name : 'Semua Dompet';
+}
+
+/** Picker dompet KHUSUS halaman Grafik -- hanya mengubah cakupan grafik
+    (chartWalletId), TIDAK mengubah dompet aktif aplikasi. Mengikuti aturan
+    kunci Premium yang sama dengan openInvoiceWalletPicker: dompet selain
+    dompet gratis terkunci bila belum Premium. */
+async function openChartWalletPicker(){
+  const premium = isPremiumUser();
+  const wallets = DB.wallets;
+  const allActive = chartWalletId === 'all';
+  const itemsHtml = wallets.map(w => {
+    const locked = !premium && w.id !== FREE_WALLET_ID;
+    const active = !allActive && w.id === chartWalletId;
+    return `
+    <button type="button" class="swal-list__item ${active?'swal-list__item--active':''} ${locked?'swal-list__item--locked':''}" data-wallet-id="${w.id}" ${locked?'data-locked="1"':''}>
+      ${ICONS.wallet}<span>${escapeHtml(w.name)}</span>
+      ${locked?proBadgeHtml():''}
+    </button>`;
+  }).join('');
+
+  await swalFire({
+    title: 'Grafik Dompet Mana?',
+    html: `<div class="swal-list">
+        <button type="button" class="swal-list__item ${allActive?'swal-list__item--active':''}" id="swal-chart-wallet-all">${ICONS.wallet}<span>Semua Dompet</span></button>
+        <div class="swal-list__divider"></div>
+        ${itemsHtml}
+      </div>`,
+    showConfirmButton: false,
+    showCancelButton: true,
+    cancelButtonText: 'Kembali',
+    didOpen: (popup) => {
+      $('#swal-chart-wallet-all', popup).addEventListener('click', ()=>{
+        Swal.close();
+        chartWalletId = 'all';
+        renderChart();
+      });
+      $all('[data-wallet-id]', popup).forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          if(btn.hasAttribute('data-locked')){
+            Swal.close();
+            guardPremium('Grafik Per Dompet', 'Melihat grafik khusus dompet selain dompet gratis adalah fitur Premium.');
+            return;
+          }
+          Swal.close();
+          chartWalletId = btn.getAttribute('data-wallet-id');
+          renderChart();
+        });
+      });
+    }
+  });
+}
 
 function daysBetween(a, b){ return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00')) / 86400000); }
 
@@ -1708,8 +1768,12 @@ function sumInRange(txs, type, from, to){
 function renderChart(){
   const rangeLabelEl = $('#chart-range');
   rangeLabelEl.textContent = formatRangeLabel(chartRange);
+  $('#chart-wallet').textContent = chartWalletLabel();
 
-  const txs = DB.transactions.filter(t=>t.date>=chartRange.from && t.date<=chartRange.to && !t.excludeFromReport);
+  const txs = DB.transactions.filter(t=>
+    t.date>=chartRange.from && t.date<=chartRange.to && !t.excludeFromReport &&
+    (chartWalletId === 'all' || t.walletId === chartWalletId)
+  );
   const canvas = document.getElementById('chart-canvas');
   const emptyEl = document.getElementById('chart-empty');
 
@@ -2138,7 +2202,7 @@ async function restoreDataPrompt(){
         document.body.classList.toggle('dark', DB.settings.theme === 'dark');
         syncStatusBarColor();
         historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
-        chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all';
+        chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all'; chartWalletId = 'all';
         renderAll();
         syncPremiumStatusFromCloud(); // jaga-jaga file backup lama bawa status premium basi
         notify('Data berhasil dipulihkan');
@@ -2156,7 +2220,7 @@ async function resetDataPrompt(){
     DB = defaultData();
     saveDB();
     historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
-    chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all';
+    chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all'; chartWalletId = 'all';
     renderAll();
     syncPremiumStatusFromCloud(); // defaultData() mereset isPremium lokal ke false, ambil status asli lagi
     notify('Semua data telah direset');
@@ -2511,6 +2575,7 @@ function wireStaticEvents(){
   });
   $('#btn-generate-invoice').addEventListener('click', generateInvoicePdf);
   $('#btn-filter-invoice-wallet').addEventListener('click', openInvoiceWalletPicker);
+  $('#btn-filter-chart-wallet').addEventListener('click', openChartWalletPicker);
 
   $all('.bottom-nav__item').forEach(btn=>{
     btn.addEventListener('click', ()=> handleNavigate(btn.getAttribute('data-nav')));
@@ -2938,7 +3003,7 @@ async function restoreFromCloudBackup(){
     document.body.classList.toggle('dark', DB.settings.theme === 'dark');
     syncStatusBarColor();
     historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range: todayRange() };
-    chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all';
+    chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all'; chartWalletId = 'all';
     renderAll();
     syncPremiumStatusFromCloud(); // jaga-jaga cadangan cloud lama bawa status premium basi
     notify('Data berhasil dipulihkan dari cloud');
