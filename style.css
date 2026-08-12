@@ -650,6 +650,7 @@ body.dark .segmented__btn--active{ color: var(--text-on-dark); }
 .swal-list__item--danger{ color: var(--c-coral); }
 .swal-list__item--muted{ color: var(--text-muted); }
 .swal-list__item--muted svg{ color: var(--text-muted); }
+.swal-list__item--icon-danger svg{ color: var(--c-coral); }
 .swal-list__item--active{ background: var(--c-emerald-soft); border-color: transparent; }
 .swal-list__item .cat-icon{ display: flex; flex: 0 0 auto; }
 .swal-list__item .cat-icon--income svg{ color: var(--c-emerald-light); }
