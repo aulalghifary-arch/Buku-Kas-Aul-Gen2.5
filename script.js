@@ -832,6 +832,7 @@ async function promptDeleteWallet(){
             if(DB.settings.selectedWalletId === id) DB.settings.selectedWalletId = DB.wallets[0].id;
             if(invoiceWalletId === id) invoiceWalletId = 'all';
             if(chartWalletId === id) chartWalletId = 'all';
+            if(historyWalletId === id) historyWalletId = 'all';
             saveDB();
             renderWalletCard();
             renderHomeSummary();
@@ -905,7 +906,7 @@ async function pickYesNo(title, current){
     title,
     html: `<div class="swal-list">
         <button type="button" class="swal-list__item ${current?'swal-list__item--active':''}" data-yesno="ya">${ICONS.check}<span>Ya</span></button>
-        <button type="button" class="swal-list__item ${!current?'swal-list__item--active':''}" data-yesno="tidak">${ICONS.close}<span>Tidak</span></button>
+        <button type="button" class="swal-list__item swal-list__item--icon-danger ${!current?'swal-list__item--active':''}" data-yesno="tidak">${ICONS.close}<span>Tidak</span></button>
       </div>`,
     showConfirmButton: false,
     showCancelButton: true,
@@ -1039,12 +1040,74 @@ function renderTxList(container, txs, opts){
 }
 
 let historyRange = todayRange();
+// 'all' = gabungan semua dompet (perilaku lama). Selain itu diisi id dompet
+// spesifik supaya riwayat hanya mencakup transaksi dari dompet tersebut.
+let historyWalletId = 'all';
+
+function historyWalletLabel(){
+  if(historyWalletId === 'all') return 'Semua Dompet';
+  const w = DB.wallets.find(x=>x.id===historyWalletId);
+  return w ? w.name : 'Semua Dompet';
+}
+
+/** Picker dompet KHUSUS halaman Riwayat -- hanya mengubah cakupan daftar
+    riwayat yang ditampilkan (historyWalletId), TIDAK mengubah dompet aktif
+    aplikasi. Mengikuti aturan kunci Premium yang sama dengan
+    openInvoiceWalletPicker/openChartWalletPicker: dompet selain dompet
+    gratis terkunci bila belum Premium. */
+async function openHistoryWalletPicker(){
+  const premium = isPremiumUser();
+  const wallets = DB.wallets;
+  const allActive = historyWalletId === 'all';
+  const itemsHtml = wallets.map(w => {
+    const locked = !premium && w.id !== FREE_WALLET_ID;
+    const active = !allActive && w.id === historyWalletId;
+    return `
+    <button type="button" class="swal-list__item ${active?'swal-list__item--active':''} ${locked?'swal-list__item--locked':''}" data-wallet-id="${w.id}" ${locked?'data-locked="1"':''}>
+      ${ICONS.wallet}<span>${escapeHtml(w.name)}</span>
+      ${locked?proBadgeHtml():''}
+    </button>`;
+  }).join('');
+
+  await swalFire({
+    title: 'Riwayat Dompet Mana?',
+    html: `<div class="swal-list">
+        <button type="button" class="swal-list__item ${allActive?'swal-list__item--active':''}" id="swal-history-wallet-all">${ICONS.wallet}<span>Semua Dompet</span></button>
+        <div class="swal-list__divider"></div>
+        ${itemsHtml}
+      </div>`,
+    showConfirmButton: false,
+    showCancelButton: true,
+    cancelButtonText: 'Kembali',
+    didOpen: (popup) => {
+      $('#swal-history-wallet-all', popup).addEventListener('click', ()=>{
+        Swal.close();
+        historyWalletId = 'all';
+        renderHistory();
+      });
+      $all('[data-wallet-id]', popup).forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          if(btn.hasAttribute('data-locked')){
+            Swal.close();
+            guardPremium('Riwayat Per Dompet', 'Melihat riwayat khusus dompet selain dompet gratis adalah fitur Premium.');
+            return;
+          }
+          Swal.close();
+          historyWalletId = btn.getAttribute('data-wallet-id');
+          renderHistory();
+        });
+      });
+    }
+  });
+}
 
 function renderHistory(){
   let txs = DB.transactions.slice();
   if(historyRange) txs = txs.filter(t=>t.date>=historyRange.from && t.date<=historyRange.to);
+  if(historyWalletId !== 'all') txs = txs.filter(t=>t.walletId===historyWalletId);
   txs = sortTxDesc(txs);
   $('#history-range').textContent = formatRangeLabel(historyRange);
+  $('#history-wallet').textContent = historyWalletLabel();
   renderTxList($('#history-list'), txs, { emptyTitle: 'Belum ada riwayat', emptySub: 'Semua transaksi akan tercatat di sini' });
 }
 
@@ -2201,7 +2264,7 @@ async function restoreDataPrompt(){
         saveDB();
         document.body.classList.toggle('dark', DB.settings.theme === 'dark');
         syncStatusBarColor();
-        historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
+        historyRange = todayRange(); historyWalletId = 'all'; categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
         chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all'; chartWalletId = 'all';
         renderAll();
         syncPremiumStatusFromCloud(); // jaga-jaga file backup lama bawa status premium basi
@@ -2219,7 +2282,7 @@ async function resetDataPrompt(){
   if(ok){
     DB = defaultData();
     saveDB();
-    historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
+    historyRange = todayRange(); historyWalletId = 'all'; categoryDetailCtx = { type:'income', walletId:null, range:todayRange() };
     chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all'; chartWalletId = 'all';
     renderAll();
     syncPremiumStatusFromCloud(); // defaultData() mereset isPremium lokal ke false, ambil status asli lagi
@@ -2278,13 +2341,59 @@ function executeTransfer(fromId, toId, amount){
   notify(`Transfer ke ${toW.name} berhasil`);
 }
 
-async function openSearchDialog(){
-  const walletOptions = `<option value="all">Semua Dompet</option>` + DB.wallets.map(w=>`<option value="${w.id}">${escapeHtml(w.name)}</option>`).join('');
+/** Picker dompet SEDERHANA (tanpa kunci Premium) yang dipakai untuk filter
+    pada dialog "Cari Transaksi" -- ini murni kenyamanan pencarian, bukan
+    laporan/analitik, jadi tidak perlu digembok seperti Invoice/Grafik/
+    Riwayat. Mengembalikan id dompet terpilih, atau undefined bila
+    dibatalkan. */
+async function pickSearchWalletFilter(current){
+  const allActive = current === 'all';
+  const itemsHtml = DB.wallets.map(w => `
+    <button type="button" class="swal-list__item ${!allActive && w.id===current ? 'swal-list__item--active':''}" data-wallet-id="${w.id}">
+      ${ICONS.wallet}<span>${escapeHtml(w.name)}</span>
+    </button>`).join('');
+  const result = await swalFire({
+    title: 'Filter Dompet',
+    html: `<div class="swal-list">
+        <button type="button" class="swal-list__item ${allActive?'swal-list__item--active':''}" id="swal-search-wallet-all">${ICONS.wallet}<span>Semua Dompet</span></button>
+        <div class="swal-list__divider"></div>
+        ${itemsHtml}
+      </div>`,
+    showConfirmButton: false,
+    showCancelButton: true,
+    cancelButtonText: 'Batal',
+    didOpen: (popup) => {
+      $('#swal-search-wallet-all', popup).addEventListener('click', ()=>{
+        Swal.close({ isConfirmed: true, value: 'all' });
+      });
+      $all('[data-wallet-id]', popup).forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          Swal.close({ isConfirmed: true, value: btn.getAttribute('data-wallet-id') });
+        });
+      });
+    }
+  });
+  return result.isConfirmed ? result.value : undefined;
+}
+
+async function openSearchDialog(state){
+  // state dipertahankan (kata kunci & dompet terpilih) supaya saat popup
+  // filter dompet dibuka lalu ditutup, pencarian yang sedang berjalan tidak
+  // hilang -- dialog "Cari Transaksi" dibuka ulang dengan state terakhir.
+  state = state || { query: '', walletId: 'all' };
+  const walletLabel = state.walletId === 'all' ? 'Semua Dompet' : (DB.wallets.find(w=>w.id===state.walletId)?.name || 'Semua Dompet');
   await swalFire({
     title: 'Cari Transaksi',
     html: `
-      <input type="text" id="swal-search-q" class="swal-theme-input" placeholder="Kata kunci keterangan atau nominal" autocomplete="off" style="width:100%;padding:11px;border-radius:12px;margin-bottom:10px;">
-      <select id="swal-search-wallet" class="swal-theme-input" style="width:100%;padding:11px;border-radius:12px;">${walletOptions}</select>
+      <input type="text" id="swal-search-q" class="swal-theme-input" placeholder="Kata kunci keterangan atau nominal" autocomplete="off" style="width:100%;padding:11px;border-radius:12px;margin-bottom:10px;" value="${escapeHtml(state.query)}">
+      <button type="button" class="field-btn field-btn--wide" id="swal-search-wallet-btn">
+        <span class="field-btn__icon">${ICONS.wallet}</span>
+        <span class="field-btn__text">
+          <span class="field-btn__label">Dompet</span>
+          <span class="field-btn__value" id="swal-search-wallet-value">${escapeHtml(walletLabel)}</span>
+        </span>
+        <svg class="field-btn__chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
       <div id="swal-search-results" style="margin-top:14px;max-height:280px;overflow-y:auto;"></div>
     `,
     showConfirmButton: false,
@@ -2292,12 +2401,12 @@ async function openSearchDialog(){
     cancelButtonText: 'Tutup',
     didOpen: (popup) => {
       const q = $('#swal-search-q', popup);
-      const walletSel = $('#swal-search-wallet', popup);
+      const walletBtn = $('#swal-search-wallet-btn', popup);
       const resultsEl = $('#swal-search-results', popup);
+      let walletFilter = state.walletId;
 
       function runSearch(){
         const term = q.value.trim().toLowerCase();
-        const walletFilter = walletSel.value;
         let txs = DB.transactions.slice();
         if(walletFilter !== 'all') txs = txs.filter(t=>t.walletId===walletFilter);
         if(term){
@@ -2323,7 +2432,11 @@ async function openSearchDialog(){
         });
       }
       q.addEventListener('input', debounce(runSearch, 200));
-      walletSel.addEventListener('change', runSearch);
+      walletBtn.addEventListener('click', async ()=>{
+        Swal.close();
+        const picked = await pickSearchWalletFilter(walletFilter);
+        openSearchDialog({ query: q.value, walletId: picked !== undefined ? picked : walletFilter });
+      });
       runSearch();
     }
   });
@@ -2576,6 +2689,7 @@ function wireStaticEvents(){
   $('#btn-generate-invoice').addEventListener('click', generateInvoicePdf);
   $('#btn-filter-invoice-wallet').addEventListener('click', openInvoiceWalletPicker);
   $('#btn-filter-chart-wallet').addEventListener('click', openChartWalletPicker);
+  $('#btn-filter-history-wallet').addEventListener('click', openHistoryWalletPicker);
 
   $all('.bottom-nav__item').forEach(btn=>{
     btn.addEventListener('click', ()=> handleNavigate(btn.getAttribute('data-nav')));
@@ -3002,7 +3116,7 @@ async function restoreFromCloudBackup(){
     saveDB();
     document.body.classList.toggle('dark', DB.settings.theme === 'dark');
     syncStatusBarColor();
-    historyRange = todayRange(); categoryDetailCtx = { type:'income', walletId:null, range: todayRange() };
+    historyRange = todayRange(); historyWalletId = 'all'; categoryDetailCtx = { type:'income', walletId:null, range: todayRange() };
     chartRange = todayRange(); invoiceRange = todayRange(); invoiceWalletId = 'all'; chartWalletId = 'all';
     renderAll();
     syncPremiumStatusFromCloud(); // jaga-jaga cadangan cloud lama bawa status premium basi
